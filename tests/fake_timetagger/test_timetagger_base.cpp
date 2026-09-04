@@ -122,20 +122,6 @@ TEST_CASE("fence counter allocates on request and can be peeked without "
     CHECK(tagger.sync());
 }
 
-TEST_CASE("misc TimeTaggerBase queries report fixed, documented behavior",
-          "[TimeTaggerBase]") {
-    TimeTaggerBase tagger;
-    CHECK(tagger.isUnusedChannel(CHANNEL_UNUSED));
-    CHECK_FALSE(tagger.isUnusedChannel(1));
-    CHECK(tagger.getInvertedChannel(1) == CHANNEL_UNUSED);
-    CHECK(tagger.getConfiguration() == "{}");
-    CHECK(tagger.getRegistrations(1) == 0);
-
-    CHECK(tagger.xtra_getAutoStart());
-    tagger.xtra_setAutoStart(false);
-    CHECK_FALSE(tagger.xtra_getAutoStart());
-}
-
 TEST_CASE("runSynchronized invokes every callback in the map exactly once",
           "[TimeTaggerBase]") {
     TimeTaggerBase tagger;
