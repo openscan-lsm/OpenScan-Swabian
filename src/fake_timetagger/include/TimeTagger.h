@@ -199,8 +199,14 @@ class TimeTaggerBase {
     }
     [[nodiscard]] bool sync(std::int64_t = -1) { return true; }
 
-    [[nodiscard]] channel_t getInvertedChannel(channel_t) {
-        return CHANNEL_UNUSED; // no inverted channels modeled
+    [[nodiscard]] channel_t getInvertedChannel(channel_t channel) {
+        // Matches this fake's own tag generation (PumpLoop, below): every
+        // simulated channel (PHOTON_CHANNEL, SYNC_CHANNEL,
+        // LINE_CLOCK_CHANNEL) emits its falling edge on the negated
+        // channel number, so that's what's modeled as "inverted" here.
+        if (channel == CHANNEL_UNUSED)
+            return CHANNEL_UNUSED;
+        return -channel;
     }
     [[nodiscard]] bool isUnusedChannel(channel_t channel) {
         return channel == CHANNEL_UNUSED;

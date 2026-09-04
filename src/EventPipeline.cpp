@@ -337,12 +337,7 @@ auto make_processor(
     auto photon_processor =
     pair_one_between(
         arg::start_channel{data->photonChannel},
-        // Stop channel is the FALLING edge of the same pulse (negative
-        // channel number -- see decode_swabian_tags/the raw dump's
-        // "channel=-3" convention), not the rising edge again -- pairs a
-        // photon pulse's rise with its own fall, per "Max Photon Pulse
-        // Width"'s meaning.
-        std::array{-data->photonChannel},
+        std::array{data->tagger->getInvertedChannel(data->photonChannel)},
         arg::time_window<abstime_type>{data->maxPhotonPulseWidth},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
@@ -416,7 +411,7 @@ auto make_processor(
         channel_router(std::array{
             std::pair{data->syncChannel, 0},
             std::pair{data->photonChannel, 1},
-            std::pair{-1 * data->photonChannel, 1},
+            std::pair{data->tagger->getInvertedChannel(data->photonChannel), 1},
             std::pair{data->lineClockChannel, 2},
         }),
         std::move(sync_processor),
@@ -480,7 +475,9 @@ EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std
     auto* data = GetData(device);
     for (auto const &channel : {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
         registerChannel(channel);
-        registerChannel(-1 * channel);
+        auto const inverted = data->tagger->getInvertedChannel(channel);
+        if (!data->tagger->isUnusedChannel(inverted))
+            registerChannel(inverted);
     }
     consumer_thread_ = std::thread([this]() { PumpConsumerLoop(); });
     finishInitialization();
