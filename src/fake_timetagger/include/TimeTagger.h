@@ -199,8 +199,12 @@ class TimeTaggerBase {
     }
     [[nodiscard]] bool sync(std::int64_t = -1) { return true; }
 
-    [[nodiscard]] channel_t getInvertedChannel(channel_t) {
-        return CHANNEL_UNUSED; // no inverted channels modeled
+    [[nodiscard]] channel_t getInvertedChannel(channel_t channel) {
+        if (channel == CHANNEL_UNUSED)
+            return CHANNEL_UNUSED;
+        // For newer Time Tagger models, the inverted channel
+        // is the negated number
+        return -channel;
     }
     [[nodiscard]] bool isUnusedChannel(channel_t channel) {
         return channel == CHANNEL_UNUSED;
