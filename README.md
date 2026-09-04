@@ -1,7 +1,8 @@
 # OpenScan-Swabian
 
 An [OpenScan](https://github.com/openscan-lsm/OpenScanLib) device module that
-adapts a Swabian Instruments Time Tagger as a **detector** for laser-scanning
+adapts a [Swabian Instruments Time Tagger](https://www.swabianinstruments.com/static/documentation/TimeTagger/index.html)
+as a **detector** for laser-scanning
 microscopy TCSPC (time-correlated single-photon counting) acquisitions,
 usable from [Micro-Manager](https://micro-manager.org/) via OpenScan's LSM
 device.
