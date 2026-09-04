@@ -475,9 +475,7 @@ EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std
     auto* data = GetData(device);
     for (auto const &channel : {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
         registerChannel(channel);
-        auto const inverted = data->tagger->getInvertedChannel(channel);
-        if (!data->tagger->isUnusedChannel(inverted))
-            registerChannel(inverted);
+        registerChannel(data->tagger->getInvertedChannel(channel));
     }
     consumer_thread_ = std::thread([this]() { PumpConsumerLoop(); });
     finishInitialization();
