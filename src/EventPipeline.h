@@ -23,14 +23,13 @@ struct pixel_tick_event {
     tcspc::i64 abstime;
 };
 
-class EventPipeline : public IteratorBase {
+class EventPipeline final : public IteratorBase {
 public:
     EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);
     ~EventPipeline();
-protected:
 
+protected:
     bool next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin_time, timestamp_t end_time) override;
-    void clear_impl() override final;
     void on_start() override;
     void on_stop() override;
 

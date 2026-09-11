@@ -77,7 +77,7 @@ static OScDev_Error TimeTagger_EnumerateInstances(OScDev_PtrArray **devices) {
 
     for (const std::string &serial : serials) {
         OScDev_Device *device;
-        TimeTagger_PrivateData *data = new TimeTagger_PrivateData{serial, nullptr};
+        TimeTagger_PrivateData *data = new TimeTagger_PrivateData{serial};
         OScDev_RichError *err = OScDev_Error_AsRichError(OScDev_Device_Create(&device, &SwabianTimeTaggerImpl, data));
         if (err) {
             delete data; // This one was never handed to OpenScanLib
@@ -114,7 +114,8 @@ static OScDev_Error TimeTagger_GetName(OScDev_Device *device, char *name) {
 static OScDev_Error TimeTagger_Open(OScDev_Device *device) {
     TimeTagger_PrivateData *data = GetData(device);
     try {
-        data->tagger = createTimeTagger(data->serial);
+        data->tagger = std::unique_ptr<TimeTaggerBase, void(*)(TimeTaggerBase *)>{
+            createTimeTagger(data->serial), &freeTimeTagger };
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
@@ -125,8 +126,7 @@ static OScDev_Error TimeTagger_Close(OScDev_Device *device) {
     auto *data = GetData(device);
     // Stop the acquisition first
     data->pipeline.reset();
-    freeTimeTagger(data->tagger);
-    data->tagger = nullptr;
+    data->tagger.reset();
     return OScDev_OK;
 }
 

@@ -233,17 +233,17 @@ auto make_processor(
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
 
     // pair_all_between guarantees every correlated photon's difftime is
-    // less than maxDiffTime, so the histogram's covered range
-    // (bin_width * num_bins) must be at least maxDiffTime for none of them
+    // less than maxDiffTime_ps, so the histogram's covered range
+    // (bin_width * num_bins) must be at least maxDiffTime_ps for none of them
     // to be silently dropped by the bin mapper. Ceiling division instead
-    // always rounds bin_width UP, so bin_width * num_bins >= maxDiffTime
+    // always rounds bin_width UP, so bin_width * num_bins >= maxDiffTime_ps
     // always holds; the only cost is the covered range overshooting
-    // maxDiffTime by at most num_bins - 1 ps (one bin's worth of rounding
+    // maxDiffTime_ps by at most num_bins - 1 ps (one bin's worth of rounding
     // error spread across the whole histogram), which is a far cheaper
     // trade than losing real data.
     std::int32_t const num_bins = data->histogramBins;
     difftime_type const bin_width =
-        (data->maxDiffTime + num_bins - 1) / num_bins;
+        (data->maxDiffTime_ps + num_bins - 1) / num_bins;
 
     using tc_event_list = type_list<
         time_correlated_detection_event<>,
@@ -325,20 +325,20 @@ auto make_processor(
     pair_all_between(
         arg::start_channel{data->syncChannel},
         std::array{data->photonChannel},
-        arg::time_window<abstime_type>{data->maxDiffTime},
+        arg::time_window<abstime_type>{data->maxDiffTime_ps},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     time_correlate_at_stop(
     std::move(tc_merge)))));
 
     auto sync_processor =
-    delay(arg::delta<abstime_type>{data->syncDelay},
+    delay(arg::delta<abstime_type>{data->syncDelay_ps},
     std::move(sync_merge));
 
     auto photon_processor =
     pair_one_between(
         arg::start_channel{data->photonChannel},
         std::array{data->tagger->getInvertedChannel(data->photonChannel)},
-        arg::time_window<abstime_type>{data->maxPhotonPulseWidth},
+        arg::time_window<abstime_type>{data->maxPhotonPulseWidth_ps},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
     // the start (rising, +photonChannel) side of the pair, not the stop
@@ -349,7 +349,7 @@ auto make_processor(
     time_correlate_at_midpoint<default_numeric_traits, true>(
     remove_time_correlation(
     recover_order<type_list<detection_event<>, time_reached_event<>>>(
-        arg::time_window<abstime_type>{data->maxPhotonPulseWidth},
+        arg::time_window<abstime_type>{data->maxPhotonPulseWidth_ps},
     std::move(cfd_merge))))));
 
 
@@ -358,7 +358,7 @@ auto make_processor(
     // Convert line clock detection events into (width + 1) pixel tick events
     generate<detection_event<>, pixel_tick_event>(
         linear_timing_generator(
-            arg::delay<abstime_type>{data->lineDelay},
+            arg::delay<abstime_type>{data->lineDelay_ps},
             arg::interval<abstime_type>{abstime_type(1e12 / pixelRate)},
             arg::count{std::size_t(width) + 1}
         ),
@@ -467,7 +467,8 @@ make_pipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared
 }
 } // namespace
 
-EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) : IteratorBase(GetData(device)->tagger),
+EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) :
+    IteratorBase(GetData(device)->tagger.get()),
     device_(device),
     pipeline_(make_pipeline(GetData(device), acq, ctx)),
     accessor_(ctx->access<tcspc::buffer_accessor>("tag_buffer"))
@@ -516,9 +517,6 @@ bool EventPipeline::next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin
     }
     OScDev_Log_Info(device_, "EventPipeline::next_impl: handled all those tags");
     return false;
-}
-
-void EventPipeline::clear_impl() {
 }
 
 void EventPipeline::on_start() {
