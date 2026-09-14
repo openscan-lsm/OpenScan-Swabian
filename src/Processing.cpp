@@ -55,7 +55,7 @@ private:
         // HandleFinish() once currentLine / linesPerFrame == maxFrames --
         // stop once the requested number of frames has been delivered, via
         // the same clean-completion protocol as any other stop condition
-        // in this pipeline (see EventPipeline::next_impl()'s catch for
+        // in this pipeline (see TagStreamProcessor::push()'s catch for
         // tcspc::end_of_processing). Matches BH: it's IntensityImageSink,
         // not HistogramSink, that calls stopFunc() -- the live/intensity
         // branch owns completion, not the full-histogram branch.
