@@ -19,10 +19,12 @@ image.
   — the `OScDev_DeviceImpl` device module itself: device lifecycle
   (`Open`/`Close`/`Arm`/`Start`/`Stop`/`IsRunning`/`Wait`) and the settings
   described below.
-- `src/EventPipeline.cpp`/`.h` — the libtcspc processing graph: decodes raw
+- `src/Processing.cpp`/`.h` — the libtcspc processing graph: decodes raw
   tags, pairs sync/photon detections, derives per-pixel timing windows from
   the line clock, bins photons into per-pixel histograms, and delivers
   frames.
+- `src/EventPipeline.cpp`/`.h` — the SDK measurement that feeds raw tags
+  into the processing graph and the thread that pumps it.
 - `src/fake_timetagger/` — a from-scratch, header-only fake of the vendor
   Time Tagger C++ SDK, used for `simulate=true` builds (see below). Its goal
   is to be a faithful stand-in: code written against it should build and run

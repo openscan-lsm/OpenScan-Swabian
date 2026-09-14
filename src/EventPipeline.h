@@ -1,27 +1,10 @@
 #include <OpenScanDeviceLib.h>
 #include <libtcspc/tcspc.hpp>
 #include <TimeTagger.h>
-#include <TimeTaggerPrivate.h>
 
 #include <memory>
+#include <thread>
 #include <vector>
-
-using abstime_type = tcspc::default_numeric_traits::abstime_type;
-using difftime_type = tcspc::default_numeric_traits::difftime_type;
-using channel_type = tcspc::default_numeric_traits::channel_type;
-using bin_index_type = tcspc::default_numeric_traits::bin_index_type;
-
-struct pixel_start_event {
-    tcspc::i64 abstime;
-};
-
-struct pixel_stop_event {
-    tcspc::i64 abstime;
-};
-
-struct pixel_tick_event {
-    tcspc::i64 abstime;
-};
 
 class EventPipeline final : public IteratorBase {
 public:
@@ -41,5 +24,3 @@ private:
 
     void PumpConsumerLoop();
 };
-
-auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);

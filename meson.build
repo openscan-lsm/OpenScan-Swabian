@@ -115,6 +115,7 @@ openscanlib_dep = dependency(
 
 src = files(
     'src/EventPipeline.cpp',
+    'src/Processing.cpp',
     'src/TimeTagger.cpp',
     'src/TimeTaggerSettings.cpp',
     'src/UniqueFileName.cpp',

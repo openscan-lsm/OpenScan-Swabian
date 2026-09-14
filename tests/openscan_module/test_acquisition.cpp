@@ -9,7 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Only for the Tag struct/LINE_CLOCK_CHANNEL constant, to decode the raw dump
-// byte-for-byte in the same layout EventPipeline.cpp wrote it -- this test
+// byte-for-byte in the same layout Processing.cpp wrote it -- this test
 // otherwise only drives the module through the public OpenScanLib API, like
 // every other test in this directory.
 #include <TimeTagger.h>
