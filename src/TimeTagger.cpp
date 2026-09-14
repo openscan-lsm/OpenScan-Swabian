@@ -1,7 +1,6 @@
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
 #include <TimeTaggerPrivate.h>
-#include <EventPipeline.h>
 
 #include <string>
 #include <vector>
@@ -125,7 +124,7 @@ static OScDev_Error TimeTagger_Open(OScDev_Device *device) {
 static OScDev_Error TimeTagger_Close(OScDev_Device *device) {
     auto *data = GetData(device);
     // Stop the acquisition first
-    data->pipeline.reset();
+    data->run.reset();
     data->tagger.reset();
     return OScDev_OK;
 }
@@ -180,14 +179,13 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
             "Unsupported operation (only external clock source supported)"));
     }
 
-    // Tear down any still-running pipeline from a previous Arm() BEFORE
+    // Tear down any still-running acquisition from a previous Arm() BEFORE
     // constructing the new one.
-    GetData(device)->pipeline.reset();
+    GetData(device)->run.reset();
 
-    auto ctx = tcspc::context::create();
     try {
-        GetData(device)->pipeline = std::make_unique<EventPipeline>(device, acq, ctx);
-    } catch (const std::runtime_error &e) {
+        GetData(device)->run = std::make_unique<AcquisitionRun>(device, acq);
+    } catch (const std::exception &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
 
@@ -201,21 +199,21 @@ static OScDev_Error Start(OScDev_Device *) {
 }
 
 static OScDev_Error Stop(OScDev_Device *device) {
-    GetData(device)->pipeline.reset();
+    GetData(device)->run.reset();
     return OScDev_OK;
 }
 
 static OScDev_Error IsRunning(OScDev_Device *device, bool *isRunning) {
-    auto& pipeline = GetData(device)->pipeline;
-    *isRunning = pipeline && pipeline->isRunning();
+    auto& run = GetData(device)->run;
+    *isRunning = run && run->isRunning();
     OScDev_Log_Info(device, ("Swabian Time Tagger acquisition is running: " + std::string(*isRunning ? "true" : "false")).c_str());
     return OScDev_OK;
 }
 
 static OScDev_Error Wait(OScDev_Device *device) {
-    auto& pipeline = GetData(device)->pipeline;
-    if (pipeline) {
-        pipeline->waitUntilFinished();
+    auto& run = GetData(device)->run;
+    if (run) {
+        run->waitUntilFinished();
     }
     return OScDev_OK;
 }

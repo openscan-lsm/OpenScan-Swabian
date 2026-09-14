@@ -1,12 +1,11 @@
-#include "EventPipeline.h"
+#include "Processing.h"
+#include "TimeTaggerPrivate.h"
 #include "UniqueFileName.h"
 
-#include <bit>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
-
 
 // Calls OpenScanLib's frame callback with a properly-sized width*height
 // buffer (one u16 sample per pixel -- see OpenScanDeviceLib.h's
@@ -56,7 +55,7 @@ private:
         // HandleFinish() once currentLine / linesPerFrame == maxFrames --
         // stop once the requested number of frames has been delivered, via
         // the same clean-completion protocol as any other stop condition
-        // in this pipeline (see EventPipeline::next_impl()'s catch for
+        // in this pipeline (see TagStreamProcessor::push()'s catch for
         // tcspc::end_of_processing). Matches BH: it's IntensityImageSink,
         // not HistogramSink, that calls stopFunc() -- the live/intensity
         // branch owns completion, not the full-histogram branch.
@@ -451,107 +450,16 @@ auto make_processor(
     real_time_buffer<bucket<swabian_tag_event>>(
         arg::threshold<std::size_t>{2},
         std::chrono::milliseconds{500},
-        ctx->tracker<buffer_accessor>("tag_buffer"),
+        ctx->tracker<buffer_accessor>(kTagBufferTrackerName),
     unbatch<bucket<swabian_tag_event>>(
         std::move(raw_tag_downstream))));
     // clang-format on
 };
 
-namespace {
-tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>
-make_pipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) {
-    using pipeline_type = tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>;
+TagPipeline MakeProcessingPipeline(TimeTagger_PrivateData *data,
+                                   OScDev_Acquisition *acq,
+                                   std::shared_ptr<tcspc::context> const &ctx) {
     if (data->cumulative)
-        return pipeline_type(make_processor<true>(data, acq, ctx));
-    return pipeline_type(make_processor<false>(data, acq, ctx));
-}
-} // namespace
-
-EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) :
-    IteratorBase(GetData(device)->tagger.get()),
-    device_(device),
-    pipeline_(make_pipeline(GetData(device), acq, ctx)),
-    accessor_(ctx->access<tcspc::buffer_accessor>("tag_buffer"))
-{
-    auto* data = GetData(device);
-    for (auto const &channel : {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
-        registerChannel(channel);
-        registerChannel(data->tagger->getInvertedChannel(channel));
-    }
-    consumer_thread_ = std::thread([this]() { PumpConsumerLoop(); });
-    finishInitialization();
-}
-
-EventPipeline::~EventPipeline() {
-    stop();
-}
-
-bool EventPipeline::next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin_time, timestamp_t end_time) {
-    // TODO: One idea is that, to minimize the chance of tag buildup (and then losing data),
-    // all this thread should do is to push the tags onto a libtcspc buffer (which we will have to add to the pipeline),
-    // and then have another thread responsible for pumping tags out of the buffer. That would require a little more
-    // coordination. Mark is pretty sure this will be needed.
-    //
-    // TODO: Create and handle TimeReachedEvents for the end_time timestamp (can't hurt to do begin_time as well)
-    OScDev_Log_Info(device_, ("EventPipeline::next_impl: " + std::to_string(incoming_tags.size()) + " tags, begin_time= " + std::to_string(begin_time) + ", end_time= " + std::to_string(end_time)).c_str());
-    try {
-        for (auto const &tag : incoming_tags) {
-            pipeline_.handle(std::bit_cast<tcspc::swabian_tag_event>(tag));
-        }
-    } catch (tcspc::end_of_processing const &e) {
-        // Documented libtcspc protocol (see errors.hpp): a processor
-        // signals a clean, non-error completion by flushing its own
-        // downstream and throwing this; we are "the data source" that's
-        // required to catch it, and must not send it any more events
-        // afterward. finish_running() is safe to call from here (unlike
-        // stop()) since next_impl() already runs under IteratorBase's own
-        // lock.
-        OScDev_Log_Info(device_, ("EventPipeline: acquisition complete: " + std::string(e.what())).c_str());
-        finish_running();
-    } catch (std::exception const &e) {
-        // Any other exception (e.g. stop_with_error's std::runtime_error)
-        // is a genuine error in the data -- can't continue either way,
-        // but log it distinctly from a normal completion.
-        OScDev_Log_Error(device_, ("EventPipeline: pipeline error: " + std::string(e.what())).c_str());
-        finish_running();
-    }
-    OScDev_Log_Info(device_, "EventPipeline::next_impl: handled all those tags");
-    return false;
-}
-
-void EventPipeline::on_start() {
-}
-
-void EventPipeline::on_stop() {
-    // Preempt remaining tag batches with a halt.
-    accessor_.halt();
-    // Finish the current batch and then exit.
-    consumer_thread_.join();
-}
-
-void EventPipeline::PumpConsumerLoop() {
-    try {
-        accessor_.pump();
-    } catch (tcspc::end_of_processing const &e) {
-        // Documented libtcspc protocol (see errors.hpp): a processor
-        // signals a clean, non-error completion by flushing its own
-        // downstream and throwing this; we are "the data source" that's
-        // required to catch it, and must not send it any more events
-        // afterward. finish_running() is safe to call from here (unlike
-        // stop()) since next_impl() already runs under IteratorBase's own
-        // lock.
-        OScDev_Log_Info(device_, ("EventPipeline: acquisition complete: " + std::string(e.what())).c_str());
-        finish_running();
-    } catch (tcspc::source_halted const &) {
-        OScDev_Log_Info(
-            device_,
-            "EventPipeline: consumer halted, remaining tags discarded"
-        );
-    } catch (std::exception const &e) {
-        // Any other exception (e.g. stop_with_error's std::runtime_error)
-        // is a genuine error in the data -- can't continue either way,
-        // but log it distinctly from a normal completion.
-        OScDev_Log_Error(device_, ("EventPipeline: pipeline error: " + std::string(e.what())).c_str());
-        finish_running();
-    }
+        return TagPipeline(make_processor<true>(data, acq, ctx));
+    return TagPipeline(make_processor<false>(data, acq, ctx));
 }

@@ -9,7 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 // Only for the Tag struct/LINE_CLOCK_CHANNEL constant, to decode the raw dump
-// byte-for-byte in the same layout EventPipeline.cpp wrote it -- this test
+// byte-for-byte in the same layout Processing.cpp wrote it -- this test
 // otherwise only drives the module through the public OpenScanLib API, like
 // every other test in this directory.
 #include <TimeTagger.h>
@@ -259,9 +259,11 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     // (IteratorBase stops polling for more data); it deliberately does NOT
     // flush the pipeline -- see IteratorBase::finish_running()'s own
     // comment in TimeTagger.h. RawTagDumpSink's file is only closed once
-    // something actually stops the acquisition (TimeTagger.cpp's Stop()
-    // resets the pipeline, which flushes it in ~EventPipeline()), so this
-    // is required here, not just tidiness -- without it the file below is
+    // something actually stops the acquisition: TimeTagger.cpp's Stop()
+    // resets the AcquisitionRun, whose destructor stops the measurement,
+    // halts and joins the processing thread, then destroys the graph
+    // (closing the file via std::ofstream's destructor). So this is
+    // required here, not just tidiness -- without it the file below is
     // still open when we try to read/delete it.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
 
