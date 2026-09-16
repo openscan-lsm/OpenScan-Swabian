@@ -129,7 +129,7 @@ class MaxDiffTimeSetting {
     }
     static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
         // Must be positive: it's used as a histogram bin_width divisor and
-        // as a pair_all_between time_window in EventPipeline.cpp, both of
+        // as a pair_all_between time_window in Processing.cpp, both of
         // which are nonsensical (or crash-prone) at zero or negative.
         *min = 1;
         *max = std::numeric_limits<int32_t>::max();

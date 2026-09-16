@@ -397,7 +397,7 @@ class IteratorBase {
     //
     // Ensures no further data is delivered (PumpLoop's while(running_)
     // check will see this on its next iteration and exit), but leaves
-    // pumpThread_ unjoined -- a later stop() (e.g. from ~EventPipeline()
+    // pumpThread_ unjoined -- a later stop() (e.g. from ~TagStreamMeasurement()
     // or an explicit Stop()) still needs to run to actually join it and
     // call on_stop(). Until then, isRunning() correctly reports false
     // even though the object is still alive, matching how BH's acqState
