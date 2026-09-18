@@ -1,29 +1,26 @@
 #include "Processing.h"
-#include "TimeTaggerPrivate.h"
-#include "UniqueFileName.h"
 
 #include <fstream>
-#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
-// Calls OpenScanLib's frame callback with a properly-sized width*height
-// buffer (one u16 sample per pixel -- see OpenScanDeviceLib.h's
-// GetBytesPerSample/GetNumberOfChannels/CallFrameCallback docs: "values
-// other than 2 (16-bit) are not currently supported" and "the raw pixel
-// data for the channel", i.e. no room for a per-pixel histogram cube).
-// This is therefore only ever wired to the 1-bin ("intensity") branch of
-// the broadcast in make_processor -- see the comment there.
-class CallFrameCallbackSink {
-    OScDev_Acquisition *acq_;
+// Calls the frame callback with a properly-sized width*height buffer (one
+// u16 sample per pixel -- the FrameCallback contract has no room for a
+// per-pixel histogram cube). This is therefore only ever wired to the
+// 1-bin ("intensity") branch of the broadcast in make_processor -- see the
+// comment there.
+class FrameSink {
+    FrameCallback callback_;
     uint32_t channel_;
     uint32_t numFrames_;
     uint32_t framesDelivered_ = 0;
 
   public:
-    CallFrameCallbackSink(OScDev_Acquisition *acq, uint32_t channel,
-                          uint32_t numFrames)
-        : acq_(acq), channel_(channel), numFrames_(numFrames) {}
+    FrameSink(FrameCallback callback, uint32_t channel, uint32_t numFrames)
+        : callback_(std::move(callback)), channel_(channel),
+          numFrames_(numFrames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
         handle_bucket(event.data_bucket);
@@ -39,7 +36,7 @@ class CallFrameCallbackSink {
     void flush() {}
 
     [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "CallFrameCallbackSink");
+        return tcspc::processor_info(this, "FrameSink");
     }
 
     [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
@@ -48,9 +45,8 @@ class CallFrameCallbackSink {
 
   private:
     template <typename Bucket> void handle_bucket(Bucket const &data_bucket) {
-        OScDev_Acquisition_CallFrameCallback(
-            acq_, channel_,
-            const_cast<void *>(static_cast<void const *>(data_bucket.data())));
+        callback_(channel_, std::span<tcspc::u16 const>(data_bucket.data(),
+                                                        data_bucket.size()));
         // Same idea as BH's LineClockPixellator calling downstream->
         // HandleFinish() once currentLine / linesPerFrame == maxFrames --
         // stop once the requested number of frames has been delivered, via
@@ -66,14 +62,19 @@ class CallFrameCallbackSink {
 };
 
 // DEBUG: terminal sink for the full per-pixel histogram (histogramBins
-// bins/pixel) -- writes it to a known location for offline inspection
-// instead of sending it to OpenScanLib (which has no way to receive a
-// per-pixel histogram cube through CallFrameCallback -- see
-// CallFrameCallbackSink's comment above). No frame-count stop logic here;
-// the live/intensity branch (CallFrameCallbackSink) owns that. Remove, or
-// replace with real FLIM file output, once no longer needed.
+// bins/pixel) -- writes it to the given file for offline inspection
+// instead of sending it to the frame callback (which has no way to receive
+// a per-pixel histogram cube -- see FrameSink's comment above). No
+// frame-count stop logic here; the live/intensity branch (FrameSink) owns
+// that. Remove, or replace with real FLIM file output, once no longer
+// needed.
 class HistogramDumpSink {
+    std::string filename_;
+
   public:
+    explicit HistogramDumpSink(std::string filename)
+        : filename_(std::move(filename)) {}
+
     void handle(tcspc::histogram_array_event<> const &event) {
         dump_bucket(event.data_bucket);
     }
@@ -98,9 +99,8 @@ class HistogramDumpSink {
 
   private:
     template <typename Bucket> void dump_bucket(Bucket const &data_bucket) {
-        std::ofstream debug_file(
-            "C:\\Users\\gjselzer\\code\\openscan-lsm\\OpenScan-Swabian\\histogram_debug.bin",
-            std::ios::binary | std::ios::trunc);
+        std::ofstream debug_file(filename_,
+                                 std::ios::binary | std::ios::trunc);
         debug_file.write(reinterpret_cast<char const *>(data_bucket.data()),
                          static_cast<std::streamsize>(data_bucket.size() *
                                                       sizeof(tcspc::u16)));
@@ -118,7 +118,7 @@ class HistogramDumpSink {
 // realization of the gated-photon noise -- the dump would never actually
 // match what the live pipeline processed. Tapping the live tag stream
 // here instead (via the broadcast in make_processor, gated on
-// saveRawData) guarantees the dump is byte-for-byte what was actually
+// rawDataFileName) guarantees the dump is byte-for-byte what was actually
 // processed, and matches real hardware too, where there's only one
 // physical event stream feeding every consumer either way.
 class RawTagDumpSink {
@@ -148,14 +148,12 @@ class RawTagDumpSink {
 };
 
 // Full per-pixel histogram (histogramBins bins/pixel) -- debug-dumped to
-// disk, not sent to OpenScanLib. See HistogramDumpSink's comment.
+// disk, not sent to the frame callback. See HistogramDumpSink's comment.
 template <bool Cumulative>
-auto make_full_histo_proc(TimeTagger_PrivateData *data,
-                          OScDev_Acquisition *acq,
+auto make_full_histo_proc(ProcessingParams const &params,
                           std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
-    uint32_t x, y, width, height;
-    OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
+    auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
     struct reset_event {};
     if constexpr (Cumulative) {
@@ -163,40 +161,35 @@ auto make_full_histo_proc(TimeTagger_PrivateData *data,
             reset_event{}, // Reset before flush to get concluding array.
             scan_histograms<histogram_policy::emit_concluding_events,
                             reset_event>(
-                arg::num_elements{std::size_t(width * height)},
-                arg::num_bins{std::size_t(data->histogramBins)},
+                arg::num_elements{num_pixels},
+                arg::num_bins{std::size_t(params.histogramBins)},
                 arg::max_per_bin<u16>{65535}, bsource,
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
                     select<type_list<concluding_histogram_array_event<>>>(
-                        HistogramDumpSink()))));
+                        HistogramDumpSink(*params.histogramDumpFileName)))));
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
-            arg::num_elements{std::size_t(width * height)},
-            arg::num_bins{std::size_t(data->histogramBins)},
+            arg::num_elements{num_pixels},
+            arg::num_bins{std::size_t(params.histogramBins)},
             arg::max_per_bin<u16>{65535}, bsource,
             select<type_list<histogram_array_event<>>>(
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
-                    HistogramDumpSink())));
+                    HistogramDumpSink(*params.histogramDumpFileName))));
     }
 }
 
 // Single-bin ("intensity") histogram -- one count per pixel, timing
-// ignored, sent live to OpenScanLib via CallFrameCallbackSink. This is
-// the branch OpenScanLib actually displays, and the one responsible for
-// signaling acquisition completion (see CallFrameCallbackSink's comment).
+// ignored, sent live to the frame callback via FrameSink. This is the
+// branch that gets displayed, and the one responsible for signaling
+// acquisition completion (see FrameSink's comment).
 template <bool Cumulative>
-auto make_live_histo_proc(
-    TimeTagger_PrivateData * /*data*/, // unused: the intensity branch's
-                                       // binning is fixed (1 bin, clamped),
-                                       // not derived from histogramBins
-    OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) {
+auto make_live_histo_proc(ProcessingParams const &params,
+                          FrameCallback frameCallback,
+                          std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
-    uint32_t x, y, width, height;
-    OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
     auto bsource = recycling_bucket_source<u16>::create();
-    uint32_t const num_frames = OScDev_Acquisition_GetNumberOfFrames(acq);
     // scan_histograms emits a histogram_array_event as soon as each frame's
     // scan finishes. clear_every_scan clears the arrays, meaning fresh,
     // non-cumulative frames; the default policy leaves prior counts in place
@@ -205,23 +198,21 @@ auto make_live_histo_proc(
         Cumulative ? histogram_policy::default_policy
                    : histogram_policy::clear_every_scan;
     return scan_histograms<policy>(
-        arg::num_elements{std::size_t(width * height)},
+        arg::num_elements{std::size_t(params.width * params.height)},
         arg::num_bins{std::size_t(1)}, arg::max_per_bin<u16>{65535}, bsource,
         select<type_list<histogram_array_event<>>>(
             count<histogram_array_event<>>(
                 ctx->tracker<count_accessor>("frame_counter"),
-                CallFrameCallbackSink(acq, 0, num_frames))));
+                FrameSink(std::move(frameCallback), 0, params.numFrames))));
 }
 
 template <bool Cumulative>
-auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
+auto make_processor(ProcessingParams const &params,
+                    FrameCallback frameCallback,
                     std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
 
     // clang-format off
-
-    uint32_t x, y, width, height;
-    OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
 
     // pair_all_between guarantees every correlated photon's difftime is
     // less than maxDiffTime_ps, so the histogram's covered range
@@ -232,9 +223,9 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
     // maxDiffTime_ps by at most num_bins - 1 ps (one bin's worth of rounding
     // error spread across the whole histogram), which is a far cheaper
     // trade than losing real data.
-    std::int32_t const num_bins = data->histogramBins;
+    std::int32_t const num_bins = params.histogramBins;
     difftime_type const bin_width =
-        (data->maxDiffTime_ps + num_bins - 1) / num_bins;
+        (params.maxDiffTime_ps + num_bins - 1) / num_bins;
 
     using tc_event_list = type_list<
         time_correlated_detection_event<>,
@@ -244,10 +235,9 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
 
     // Single-bin "intensity" equivalent (max_bin_index=0, clamp=true forces
     // every photon into bin 0 regardless of its difftime) -- this is the
-    // one actually sent live to OpenScanLib via CallFrameCallback, since
-    // that contract only supports one u16 sample per pixel (see
-    // CallFrameCallbackSink's comment). Always built: this is the live
-    // image path.
+    // one actually sent live to the frame callback, since that contract
+    // only supports one u16 sample per pixel (see FrameSink's comment).
+    // Always built: this is the live image path.
     auto live_pixel_chain =
     map_to_datapoints<time_correlated_detection_event<>>(
         difftime_data_mapper(),
@@ -260,27 +250,28 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
     cluster_bin_increments<pixel_start_event, pixel_stop_event>(
     count<bin_increment_cluster_event<>>(
         ctx->tracker<count_accessor>("live_pixel_counter"),
-    make_live_histo_proc<Cumulative>(data, acq, ctx)))));
+    make_live_histo_proc<Cumulative>(params, std::move(frameCallback), ctx)))));
 
     // The full per-pixel histogram (histogramBins bins/pixel, debug-dumped
-    // to disk by HistogramDumpSink) is only useful when the "Save
-    // Histograms" setting is on. Broadcasting every time-correlated event
+    // to disk by HistogramDumpSink) is only useful when a dump file name
+    // was given. Broadcasting every time-correlated event
     // to it as well as to live_pixel_chain roughly doubles consumer-side
     // per-event work (map_to_datapoints -> map_to_bins ->
     // cluster_bin_increments -> scan_histograms, all over again, plus the
     // dump itself), for no benefit when nobody's consuming it. So it's
     // built -- and the broadcast exists at all -- only inside this branch;
-    // when the setting is off, tc_downstream is just live_pixel_chain,
+    // otherwise, tc_downstream is just live_pixel_chain,
     // type-erased to the same interface so both arms of the branch have a
     // common type to hand to merge() below.
     type_erased_processor<tc_event_list> tc_downstream =
         [&]() -> type_erased_processor<tc_event_list> {
-        if (!data->saveHistograms)
+        if (!params.histogramDumpFileName)
             return type_erased_processor<tc_event_list>(
                 std::move(live_pixel_chain));
 
         // Full per-pixel TCSPC histogram (derived bin_width, real
-        // histogramBins) -- debug-dumped to disk, not sent to OpenScanLib.
+        // histogramBins) -- debug-dumped to disk, not sent to the frame
+        // callback.
         auto full_pixel_chain =
         map_to_datapoints<time_correlated_detection_event<>>(
             difftime_data_mapper(),
@@ -297,7 +288,7 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
         cluster_bin_increments<pixel_start_event, pixel_stop_event>(
         count<bin_increment_cluster_event<>>(
             ctx->tracker<count_accessor>("pixel_counter"),
-        make_full_histo_proc<Cumulative>(data, acq, ctx)))));
+        make_full_histo_proc<Cumulative>(params, ctx)))));
 
         return type_erased_processor<tc_event_list>(
             broadcast<tc_event_list>(
@@ -314,48 +305,46 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
     merge<type_list<detection_event<>, time_reached_event<>>>(
         arg::max_buffered<>{1 << 20},
     pair_all_between(
-        arg::start_channel{data->syncChannel},
-        std::array{data->photonChannel},
-        arg::time_window<abstime_type>{data->maxDiffTime_ps},
+        arg::start_channel{params.syncChannel},
+        std::array{params.photonLeadingChannel},
+        arg::time_window<abstime_type>{params.maxDiffTime_ps},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     time_correlate_at_stop(
     std::move(tc_merge)))));
 
     auto sync_processor =
-    delay(arg::delta<abstime_type>{data->syncDelay_ps},
+    delay(arg::delta<abstime_type>{params.syncDelay_ps},
     std::move(sync_merge));
 
     auto photon_processor =
     pair_one_between(
-        arg::start_channel{data->photonChannel},
-        std::array{data->tagger->getInvertedChannel(data->photonChannel)},
-        arg::time_window<abstime_type>{data->maxPhotonPulseWidth_ps},
+        arg::start_channel{params.photonLeadingChannel},
+        std::array{params.photonTrailingChannel},
+        arg::time_window<abstime_type>{params.maxPhotonPulseWidth_ps},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
-    // the start (rising, +photonChannel) side of the pair, not the stop
-    // (falling, -photonChannel) side -- downstream (the sync/photon
-    // pair_all_between below) matches on +photonChannel, so a pulse
-    // event carrying the falling edge's negative channel would never
-    // correlate with anything.
+    // the start (photonLeadingChannel) side of the pair, not the stop
+    // (photonTrailingChannel) side -- downstream (the sync/photon
+    // pair_all_between below) matches on photonLeadingChannel, so a pulse
+    // event carrying the trailing edge's channel would never correlate
+    // with anything.
     time_correlate_at_midpoint<default_numeric_traits, true>(
     remove_time_correlation(
     recover_order<type_list<detection_event<>, time_reached_event<>>>(
-        arg::time_window<abstime_type>{data->maxPhotonPulseWidth_ps},
+        arg::time_window<abstime_type>{params.maxPhotonPulseWidth_ps},
     std::move(cfd_merge))))));
 
-
-    double pixelRate = OScDev_Acquisition_GetPixelRate(acq);
     auto pixel_marker_processor =
     // Convert line clock detection events into (width + 1) pixel tick events
     generate<detection_event<>, pixel_tick_event>(
         linear_timing_generator(
-            arg::delay<abstime_type>{data->lineDelay_ps},
-            arg::interval<abstime_type>{abstime_type(1e12 / pixelRate)},
-            arg::count{std::size_t(width) + 1}
+            arg::delay<abstime_type>{params.lineDelay_ps},
+            arg::interval<abstime_type>{params.pixelTime_ps},
+            arg::count{std::size_t(params.width) + 1}
         ),
     // Convert (width) pixel tick events into (width) "pixel start + pixel stop" intervals
     convert_sequences_to_start_stop<pixel_tick_event, pixel_start_event, pixel_stop_event>(
-        arg::count{std::size_t(width)},
+        arg::count{std::size_t(params.width)},
     // Filter out the line clock events
     select<type_list<pixel_start_event, pixel_stop_event, time_reached_event<>>>(
     // Enforce pixel start/pixel stop alternation
@@ -400,37 +389,28 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
         arg::count_threshold<>{1 << 18}, // 1/4 of merge buffer size
     route<type_list<detection_event<>>, type_list<time_reached_event<>>>(
         channel_router(std::array{
-            std::pair{data->syncChannel, 0},
-            std::pair{data->photonChannel, 1},
-            std::pair{data->tagger->getInvertedChannel(data->photonChannel), 1},
-            std::pair{data->lineClockChannel, 2},
+            std::pair{params.syncChannel, 0},
+            std::pair{params.photonLeadingChannel, 1},
+            std::pair{params.photonTrailingChannel, 1},
+            std::pair{params.lineClockChannel, 2},
         }),
         std::move(sync_processor),
         std::move(photon_processor),
         std::move(pixel_marker_processor))))))));
 
-    // Raw-tag dump, gated on "Save Raw Data" -- see RawTagDumpSink's
+    // Raw-tag dump, only if a file name was given -- see RawTagDumpSink's
     // comment for why this taps the live stream via a broadcast here
     // instead of running as a second, independent Dump/IteratorBase
-    // measurement. Filename follows OpenScan-BH_SPC's own scheme
-    // (File Name Prefix setting + UniqueFileName's "_NNNN" index) --
-    // see UniqueFileName.h for why, and a note on alternatives.
+    // measurement.
     type_erased_processor<raw_event_list> raw_tag_downstream =
         [&]() -> type_erased_processor<raw_event_list> {
-        if (!data->saveRawData)
+        if (!params.rawDataFileName)
             return type_erased_processor<raw_event_list>(
                 std::move(rest_of_chain));
 
-        std::optional<std::string> const unique_name =
-            UniqueFileName(data->fileNamePrefix, {".raw"});
-        if (!unique_name)
-            throw std::runtime_error(
-                "Could not find a unique file name for raw data (prefix '" +
-                data->fileNamePrefix + "')");
-
         return type_erased_processor<raw_event_list>(
             broadcast<raw_event_list>(
-                RawTagDumpSink(*unique_name + ".raw"),
+                RawTagDumpSink(*params.rawDataFileName),
                 std::move(rest_of_chain)));
     }();
 
@@ -449,9 +429,12 @@ auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
 };
 
 TagPipeline
-MakeProcessingPipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
+MakeProcessingPipeline(ProcessingParams const &params,
+                       FrameCallback frameCallback,
                        std::shared_ptr<tcspc::context> const &ctx) {
-    if (data->cumulative)
-        return TagPipeline(make_processor<true>(data, acq, ctx));
-    return TagPipeline(make_processor<false>(data, acq, ctx));
+    if (params.cumulative)
+        return TagPipeline(
+            make_processor<true>(params, std::move(frameCallback), ctx));
+    return TagPipeline(
+        make_processor<false>(params, std::move(frameCallback), ctx));
 }
