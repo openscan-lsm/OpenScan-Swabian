@@ -116,8 +116,8 @@ void AcquisitionRun::waitUntilFinished() { measurement_.waitUntilFinished(); }
 bool AcquisitionRun::Push(std::vector<Tag> const &tags) {
     // The consumer having ended (it logged why) is the usual way an
     // acquisition completes; checking here lets isRunning() flip promptly
-    // instead of waiting for the batch processor to fill another bucket
-    // and bounce end_of_processing back from the buffer.
+    // instead of waiting for the next push to bounce end_of_processing
+    // back from the buffer.
     if (processingThread_.finished())
         return false;
     if (processor_.push(tags))

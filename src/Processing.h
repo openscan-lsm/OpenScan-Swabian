@@ -9,8 +9,8 @@
 #include <span>
 #include <string>
 
-using TagPipeline =
-    tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>;
+using TagSpan = std::span<tcspc::swabian_tag_event const>;
+using TagPipeline = tcspc::type_erased_processor<tcspc::type_list<TagSpan>>;
 
 inline constexpr char kTagBufferTrackerName[] = "tag_buffer";
 
