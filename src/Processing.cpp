@@ -6,6 +6,24 @@
 #include <string>
 #include <utility>
 
+namespace {
+
+using abstime_type = tcspc::default_numeric_traits::abstime_type;
+using difftime_type = tcspc::default_numeric_traits::difftime_type;
+using bin_index_type = tcspc::default_numeric_traits::bin_index_type;
+
+struct pixel_start_event {
+    tcspc::i64 abstime;
+};
+
+struct pixel_stop_event {
+    tcspc::i64 abstime;
+};
+
+struct pixel_tick_event {
+    tcspc::i64 abstime;
+};
+
 // Calls the frame callback with a properly-sized width*height buffer (one
 // u16 sample per pixel -- the FrameCallback contract has no room for a
 // per-pixel histogram cube). This is therefore only ever wired to the
@@ -427,6 +445,8 @@ auto make_processor(ProcessingParams const &params,
         std::move(raw_tag_downstream))));
     // clang-format on
 };
+
+} // namespace
 
 TagPipeline
 MakeProcessingPipeline(ProcessingParams const &params,
