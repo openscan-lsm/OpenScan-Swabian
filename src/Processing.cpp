@@ -150,9 +150,9 @@ class RawTagDumpSink {
                                      filename + "'");
     }
 
-    void handle(tcspc::swabian_tag_event const &event) {
-        file_.write(reinterpret_cast<char const *>(event.bytes.data()),
-                    static_cast<std::streamsize>(event.bytes.size()));
+    void handle(tcspc::bucket<tcspc::swabian_tag_event> const &tags) {
+        file_.write(reinterpret_cast<char const *>(tags.data()),
+                    static_cast<std::streamsize>(tags.size_bytes()));
     }
     void flush() { file_.flush(); }
 
@@ -364,9 +364,11 @@ auto make_processor(ProcessingParams const &params,
         "pixel time is such that pixel stop occurs after next pixel start",
     std::move(start_stop_merge))))));
 
-    using raw_event_list = type_list<swabian_tag_event>;
+    using tag_bucket = bucket<swabian_tag_event>;
+    using bucket_event_list = type_list<tag_bucket>;
 
-    auto rest_of_chain =
+    auto unbatched_chain =
+    unbatch<tag_bucket>(
     decode_swabian_tags(
     count<detection_event<>>(ctx->tracker<count_accessor>("record_counter"),
     // TODO: On real hardware, a fixed-size circular FIFO means that when
@@ -407,35 +409,33 @@ auto make_processor(ProcessingParams const &params,
         }),
         std::move(sync_processor),
         std::move(photon_processor),
-        std::move(pixel_marker_processor))))))));
+        std::move(pixel_marker_processor)))))))));
 
     // Raw-tag dump, only if a file name was given -- see RawTagDumpSink's
     // comment for why this taps the live stream via a broadcast here
     // instead of running as a second, independent Dump/IteratorBase
     // measurement.
-    type_erased_processor<raw_event_list> raw_tag_downstream =
-        [&]() -> type_erased_processor<raw_event_list> {
+    type_erased_processor<bucket_event_list> bucket_downstream =
+        [&]() -> type_erased_processor<bucket_event_list> {
         if (!params.rawDataFileName)
-            return type_erased_processor<raw_event_list>(
-                std::move(rest_of_chain));
+            return type_erased_processor<bucket_event_list>(
+                std::move(unbatched_chain));
 
-        return type_erased_processor<raw_event_list>(
-            broadcast<raw_event_list>(
+        return type_erased_processor<bucket_event_list>(
+            broadcast<bucket_event_list>(
                 RawTagDumpSink(*params.rawDataFileName),
-                std::move(rest_of_chain)));
+                std::move(unbatched_chain)));
     }();
 
+    // Each SDK-delivered batch of tags becomes one bucket.
     return
-
-    batch<swabian_tag_event>(
+    copy_to_buckets<TagSpan, swabian_tag_event>(
         recycling_bucket_source<swabian_tag_event>::create(),
-        arg::batch_size<std::size_t>{1 << 15},
-    real_time_buffer<bucket<swabian_tag_event>>(
+    real_time_buffer<tag_bucket>(
         arg::threshold<std::size_t>{2},
-        std::chrono::milliseconds{500},
+        std::chrono::milliseconds{100},
         ctx->tracker<buffer_accessor>(kTagBufferTrackerName),
-    unbatch<bucket<swabian_tag_event>>(
-        std::move(raw_tag_downstream))));
+        std::move(bucket_downstream)));
     // clang-format on
 };
 

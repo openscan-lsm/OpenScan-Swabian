@@ -16,6 +16,7 @@
 namespace {
 
 struct SinkState {
+    int calls = 0;
     int handled = 0;
     int completeAfter = 0; // 0: never
     bool failOnFirst = false;
@@ -29,13 +30,16 @@ class TestSink {
     explicit TestSink(std::shared_ptr<SinkState> state)
         : state_(std::move(state)) {}
 
-    void handle(tcspc::swabian_tag_event const &event) {
-        if (state_->failOnFirst)
-            throw std::runtime_error("bad tag");
-        ++state_->handled;
-        state_->last = event;
-        if (state_->handled == state_->completeAfter)
-            throw tcspc::end_of_processing("enough tags");
+    void handle(TagStreamProcessor::TagSpan const &tags) {
+        ++state_->calls;
+        for (auto const &event : tags) {
+            if (state_->failOnFirst)
+                throw std::runtime_error("bad tag");
+            ++state_->handled;
+            state_->last = event;
+            if (state_->handled == state_->completeAfter)
+                throw tcspc::end_of_processing("enough tags");
+        }
     }
     void flush() {}
 
@@ -71,6 +75,16 @@ TEST_CASE("TagStreamProcessor stays open while the graph accepts tags",
     CHECK(processor.push(MakeTags(3)));
     CHECK(processor.state() == TagStreamProcessor::State::Open);
     CHECK(state->handled == 3);
+    CHECK(state->calls == 1);
+}
+
+TEST_CASE("TagStreamProcessor ignores empty batches", "[lifecycle]") {
+    auto state = std::make_shared<SinkState>();
+    auto processor = MakeProcessor(state);
+
+    CHECK(processor.push({}));
+    CHECK(processor.state() == TagStreamProcessor::State::Open);
+    CHECK(state->calls == 0);
 }
 
 TEST_CASE("TagStreamProcessor closes on end_of_processing", "[lifecycle]") {

@@ -3,6 +3,7 @@
 #include <TimeTagger.h>
 #include <libtcspc/tcspc.hpp>
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -11,8 +12,8 @@
 // nothing further.
 class TagStreamProcessor {
   public:
-    using Pipeline = tcspc::type_erased_processor<
-        tcspc::type_list<tcspc::swabian_tag_event>>;
+    using TagSpan = std::span<tcspc::swabian_tag_event const>;
+    using Pipeline = tcspc::type_erased_processor<tcspc::type_list<TagSpan>>;
     enum class State { Open, Completed, Failed };
 
     explicit TagStreamProcessor(Pipeline pipeline);
