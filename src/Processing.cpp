@@ -2,7 +2,6 @@
 
 #include <fstream>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -122,46 +121,6 @@ class HistogramDumpSink {
         debug_file.write(reinterpret_cast<char const *>(data_bucket.data()),
                          static_cast<std::streamsize>(data_bucket.size() *
                                                       sizeof(tcspc::u16)));
-    }
-};
-
-// Writes every raw tag to disk, in the vendor SDK's raw dump format
-// (back-to-back 16-byte records, decodable with tools/dump_tags.py) --
-// same format as the real SDK's Dump measurement, and what "Save Raw
-// Data" used to be wired to (a second, independent Dump/IteratorBase
-// instance pulling directly from the tagger). That approach doesn't work
-// in simulate mode: each IteratorBase there runs its own PumpLoop with
-// its own independently-seeded RNG, so two separate measurements
-// "watching the same channels" would each generate a DIFFERENT random
-// realization of the gated-photon noise -- the dump would never actually
-// match what the live pipeline processed. Tapping the live tag stream
-// here instead (via the broadcast in make_processor, gated on
-// rawDataFileName) guarantees the dump is byte-for-byte what was actually
-// processed, and matches real hardware too, where there's only one
-// physical event stream feeding every consumer either way.
-class RawTagDumpSink {
-    std::ofstream file_;
-
-  public:
-    explicit RawTagDumpSink(std::string const &filename)
-        : file_(filename, std::ios::binary | std::ios::trunc) {
-        if (!file_)
-            throw std::runtime_error("RawTagDumpSink: could not open file '" +
-                                     filename + "'");
-    }
-
-    void handle(tcspc::bucket<tcspc::swabian_tag_event> const &tags) {
-        file_.write(reinterpret_cast<char const *>(tags.data()),
-                    static_cast<std::streamsize>(tags.size_bytes()));
-    }
-    void flush() { file_.flush(); }
-
-    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "RawTagDumpSink");
-    }
-
-    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
-        return tcspc::processor_graph().push_entry_point(this);
     }
 };
 
@@ -411,10 +370,8 @@ auto make_processor(ProcessingParams const &params,
         std::move(photon_processor),
         std::move(pixel_marker_processor)))))))));
 
-    // Raw-tag dump, only if a file name was given -- see RawTagDumpSink's
-    // comment for why this taps the live stream via a broadcast here
-    // instead of running as a second, independent Dump/IteratorBase
-    // measurement.
+    // Save the tags exactly as processed (if a file name was given): 16-byte
+    // records in the vendor SDK's Dump format.
     type_erased_processor<bucket_event_list> bucket_downstream =
         [&]() -> type_erased_processor<bucket_event_list> {
         if (!params.rawDataFileName)
@@ -423,7 +380,14 @@ auto make_processor(ProcessingParams const &params,
 
         return type_erased_processor<bucket_event_list>(
             broadcast<bucket_event_list>(
-                RawTagDumpSink(*params.rawDataFileName),
+                view_as_bytes(
+                write_binary_stream(
+                    binary_file_output_stream(*params.rawDataFileName,
+                                              arg::truncate{true}),
+                    recycling_bucket_source<std::byte>::create(),
+                    // Not flushed if the acquisition is halted, so use a
+                    // granularity that never leaves bytes buffered.
+                    arg::granularity<>{sizeof(swabian_tag_event)})),
                 std::move(unbatched_chain)));
     }();
 
