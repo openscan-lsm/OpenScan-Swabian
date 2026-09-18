@@ -328,7 +328,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Sync Delay", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Sync Delay (ps)", OScDev_ValueType_Int32,
                               &SyncDelaySetting::impl, device));
     if (err) {
         goto error;
@@ -336,7 +336,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Line Delay", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Line Delay (ps)", OScDev_ValueType_Int32,
                               &LineDelaySetting::impl, device));
     if (err) {
         goto error;
@@ -344,7 +344,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s, "Max Photon Pulse Width", OScDev_ValueType_Int32,
+        &s, "Max Photon Pulse Width (ps)", OScDev_ValueType_Int32,
         &MaxPhotonPulseWidthSetting::impl, device));
     if (err) {
         goto error;
@@ -352,7 +352,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Max Diff Time", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Max Diff Time (ps)", OScDev_ValueType_Int32,
                               &MaxDiffTimeSetting::impl, device));
     if (err) {
         goto error;

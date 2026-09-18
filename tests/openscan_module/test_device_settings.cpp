@@ -79,8 +79,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(v == 1);
     }
 
-    SECTION("Sync Delay: defaults to zero and round-trips") {
-        auto *s = FindSetting(settings, count, "Sync Delay");
+    SECTION("Sync Delay (ps): defaults to zero and round-trips") {
+        auto *s = FindSetting(settings, count, "Sync Delay (ps)");
         REQUIRE(s != nullptr);
         int32_t v = -1;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -92,9 +92,9 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_SetInt32Value(s, 0), "restore");
     }
 
-    SECTION("Line Delay: defaults to zero and only allows non-negative "
+    SECTION("Line Delay (ps): defaults to zero and only allows non-negative "
             "values") {
-        auto *s = FindSetting(settings, count, "Line Delay");
+        auto *s = FindSetting(settings, count, "Line Delay (ps)");
         REQUIRE(s != nullptr);
         int32_t v = -1;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -105,10 +105,10 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(min == 0);
     }
 
-    SECTION("Max Photon Pulse Width and Max Diff Time defaults") {
+    SECTION("Max Photon Pulse Width (ps) and Max Diff Time (ps) defaults") {
         auto *pulseWidth =
-            FindSetting(settings, count, "Max Photon Pulse Width");
-        auto *diffTime = FindSetting(settings, count, "Max Diff Time");
+            FindSetting(settings, count, "Max Photon Pulse Width (ps)");
+        auto *diffTime = FindSetting(settings, count, "Max Diff Time (ps)");
         REQUIRE(pulseWidth != nullptr);
         REQUIRE(diffTime != nullptr);
 

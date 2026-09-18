@@ -119,23 +119,23 @@ falling edge) that this module expects each signal to be wired to:
 
 ### Timing
 
-- **Sync Delay** (ps, default `0`) — a fixed offset applied to sync
+- **Sync Delay (ps)** (default `0`) — a fixed offset applied to sync
   detections before correlating them with photons (`delay()` ahead of the
   sync/photon pairing stage). Compensates for a known, fixed timing offset
   between the sync and photon paths (e.g. cable length differences).
-- **Max Photon Pulse Width** (ps, default `100000`) — the maximum allowed
+- **Max Photon Pulse Width (ps)** (default `100000`) — the maximum allowed
   separation between a photon channel's rising and falling edges for them to
   be treated as one pulse. Should comfortably exceed the detector's real
   pulse width, but stay short enough to avoid accidentally pairing across two
   separate pulses.
-- **Max Diff Time** (ps, default `12500`) — the maximum allowed time between
+- **Max Diff Time (ps)** (default `12500`) — the maximum allowed time between
   a sync tick and a photon detection for them to be correlated as "this
   photon resulted from this sync pulse." Only correlated photons are counted,
   in both the live image and the histogram. It should be set based on the
   laser's sync period (the default matches 80 MHz) and the fluorophore's
   expected decay time, **not** based on the pixel dwell time.
   Those are unrelated: pixel dwell time is about how long the scanner stays
-  at one spatial position, while Max Diff Time is about how long after a
+  at one spatial position, while Max Diff Time (ps) is about how long after a
   single laser pulse a photon can plausibly arrive and still belong to that
   pulse. In a typical setup many sync pulses occur within one pixel's dwell
   time, each independently contributing photons to that pixel's histogram.
@@ -149,11 +149,11 @@ falling edge) that this module expects each signal to be wired to:
   of each histogram bin.
 
   > [!NOTE]
-  > Photons whose difftime is within **Max Diff Time** but at or beyond
+  > Photons whose difftime is within **Max Diff Time (ps)** but at or beyond
   > `Histogram Bin Width × Histogram Bins` are dropped from the saved
   > histogram, yet still counted in the live image. Conversely, if
-  > `Histogram Bin Width × Histogram Bins` exceeds **Max Diff Time**, the
-  > trailing bins stay empty. With the defaults (50 × 256 = 12800 ps ≥
+  > `Histogram Bin Width × Histogram Bins` exceeds **Max Diff Time (ps)**,
+  > the trailing bins stay empty. With the defaults (50 × 256 = 12800 ps ≥
   > 12500 ps) nothing is dropped.
 - **Cumulative** (default `false`) — if enabled, the per-pixel histogram
   accumulates across the whole acquisition instead of resetting every frame.
