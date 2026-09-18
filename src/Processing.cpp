@@ -38,15 +38,12 @@ class FrameSink {
           numFrames_(numFrames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
-        handle_bucket(event.data_bucket);
-    }
-    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
-    // concluding_histogram_array_event instead of histogram_array_event
-    // (a distinct, unrelated type, despite carrying the same data_bucket
-    // shape) -- this sink needs to be a valid handler for both, since
-    // make_processor<true> selects only the former as this sink's input.
-    void handle(tcspc::concluding_histogram_array_event<> const &event) {
-        handle_bucket(event.data_bucket);
+        callback_(channel_,
+                  std::span<tcspc::u16 const>(event.data_bucket.data(),
+                                              event.data_bucket.size()));
+        if (++framesDelivered_ == numFrames_)
+            throw tcspc::end_of_processing(
+                "acquisition complete: reached requested frame count");
     }
     void flush() {}
 
@@ -56,23 +53,6 @@ class FrameSink {
 
     [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
         return tcspc::processor_graph().push_entry_point(this);
-    }
-
-  private:
-    template <typename Bucket> void handle_bucket(Bucket const &data_bucket) {
-        callback_(channel_, std::span<tcspc::u16 const>(data_bucket.data(),
-                                                        data_bucket.size()));
-        // Same idea as BH's LineClockPixellator calling downstream->
-        // HandleFinish() once currentLine / linesPerFrame == maxFrames --
-        // stop once the requested number of frames has been delivered, via
-        // the same clean-completion protocol as any other stop condition
-        // in this pipeline (see TagStreamProcessor::push()'s catch for
-        // tcspc::end_of_processing). Matches BH: it's IntensityImageSink,
-        // not HistogramSink, that calls stopFunc() -- the live/intensity
-        // branch owns completion, not the full-histogram branch.
-        if (++framesDelivered_ == numFrames_)
-            throw tcspc::end_of_processing(
-                "acquisition complete: reached requested frame count");
     }
 };
 
@@ -223,6 +203,12 @@ auto make_processor(ProcessingParams const &params,
             ctx->tracker<count_accessor>("pixel_counter"),
         make_full_histo_proc<Cumulative>(params, ctx)))));
 
+        // Order matters, for now: currently the acquisition ends by
+        // FrameSink (in live_pixel_chain) throwing end_of_processing on the
+        // last pixel_stop_event of the final frame, upon which broadcast
+        // flushes full_pixel_chain. The latter must have already seen that
+        // event, or else its final scan would be incomplete and rolled back
+        // out of the concluding (cumulative) array.
         return type_erased_processor<tc_event_list>(
             broadcast<tc_event_list>(
                 std::move(full_pixel_chain),
