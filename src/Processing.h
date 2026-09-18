@@ -1,34 +1,49 @@
 #pragma once
 
-#include <OpenScanDeviceLib.h>
 #include <libtcspc/tcspc.hpp>
 
+#include <cstdint>
+#include <functional>
 #include <memory>
-
-struct TimeTagger_PrivateData;
-
-using abstime_type = tcspc::default_numeric_traits::abstime_type;
-using difftime_type = tcspc::default_numeric_traits::difftime_type;
-using channel_type = tcspc::default_numeric_traits::channel_type;
-using bin_index_type = tcspc::default_numeric_traits::bin_index_type;
-
-struct pixel_start_event {
-    tcspc::i64 abstime;
-};
-
-struct pixel_stop_event {
-    tcspc::i64 abstime;
-};
-
-struct pixel_tick_event {
-    tcspc::i64 abstime;
-};
+#include <optional>
+#include <span>
+#include <string>
 
 using TagPipeline =
     tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>;
 
 inline constexpr char kTagBufferTrackerName[] = "tag_buffer";
 
-TagPipeline MakeProcessingPipeline(TimeTagger_PrivateData *data,
-                                   OScDev_Acquisition *acq,
+struct ProcessingParams {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::int64_t pixelTime_ps; // abstime units
+    std::uint32_t numFrames;
+
+    std::int32_t lineClockChannel;
+    std::int32_t syncChannel;
+    std::int32_t photonLeadingChannel;
+    std::int32_t photonTrailingChannel;
+
+    std::int32_t syncDelay_ps;
+    std::int32_t lineDelay_ps;
+    std::int32_t maxPhotonPulseWidth_ps;
+    std::int32_t maxDiffTime_ps;
+
+    bool cumulative;
+    std::int32_t histogramBins;
+    std::int32_t histogramBinWidth_ps;
+
+    // Files are written only if the name is set.
+    std::optional<std::string> histogramDumpFileName;
+    std::optional<std::string> rawDataFileName;
+};
+
+// Receives one u16 sample per pixel (width * height), valid only for the
+// duration of the call.
+using FrameCallback =
+    std::function<void(std::uint32_t channel, std::span<tcspc::u16 const>)>;
+
+TagPipeline MakeProcessingPipeline(ProcessingParams const &params,
+                                   FrameCallback frameCallback,
                                    std::shared_ptr<tcspc::context> const &ctx);

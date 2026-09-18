@@ -138,9 +138,8 @@ class MaxDiffTimeSetting {
     }
     static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
                                  int32_t *max) {
-        // Must be positive: it's used as a histogram bin_width divisor and
-        // as a pair_all_between time_window in Processing.cpp, both of
-        // which are nonsensical (or crash-prone) at zero or negative.
+        // Must be positive: it's used as the pair_all_between time_window
+        // in Processing.cpp.
         *min = 1;
         *max = std::numeric_limits<int32_t>::max();
         return OScDev_OK;
@@ -207,6 +206,39 @@ class HistogramBinsSetting {
         .GetInt32 = Get,
         .SetInt32 = Set,
         .GetInt32DiscreteValues = GetDiscreteValues,
+    };
+};
+
+class HistogramBinWidthSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
+        *value = GetSettingDeviceData(setting)->histogramBinWidth_ps;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
+        GetSettingDeviceData(setting)->histogramBinWidth_ps = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
+        // Max is 100 ns, well below the ~524 ns at which the histogram range
+        // would overflow the int32 difftime at 4096 bins.
+        *min = 1;
+        *max = 100'000;
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32Range = GetRange,
     };
 };
 
@@ -296,7 +328,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Sync Delay", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Sync Delay (ps)", OScDev_ValueType_Int32,
                               &SyncDelaySetting::impl, device));
     if (err) {
         goto error;
@@ -304,7 +336,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Line Delay", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Line Delay (ps)", OScDev_ValueType_Int32,
                               &LineDelaySetting::impl, device));
     if (err) {
         goto error;
@@ -312,7 +344,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s, "Max Photon Pulse Width", OScDev_ValueType_Int32,
+        &s, "Max Photon Pulse Width (ps)", OScDev_ValueType_Int32,
         &MaxPhotonPulseWidthSetting::impl, device));
     if (err) {
         goto error;
@@ -320,7 +352,7 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(
-        OScDev_Setting_Create(&s, "Max Diff Time", OScDev_ValueType_Int32,
+        OScDev_Setting_Create(&s, "Max Diff Time (ps)", OScDev_ValueType_Int32,
                               &MaxDiffTimeSetting::impl, device));
     if (err) {
         goto error;
@@ -338,6 +370,14 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     err = OScDev_Error_AsRichError(
         OScDev_Setting_Create(&s, "Histogram Bins", OScDev_ValueType_Int32,
                               &HistogramBinsSetting::impl, device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s, "Histogram Bin Width (ps)", OScDev_ValueType_Int32,
+        &HistogramBinWidthSetting::impl, device));
     if (err) {
         goto error;
     }

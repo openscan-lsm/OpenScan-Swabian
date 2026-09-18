@@ -1,10 +1,70 @@
 #include "AcquisitionRun.h"
 #include "Processing.h"
 #include "TimeTaggerPrivate.h"
+#include "UniqueFileName.h"
 
+#include <cmath>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <stdexcept>
 #include <string>
 
 namespace {
+
+ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
+                                      OScDev_Acquisition *acq) {
+    uint32_t x, y, width, height;
+    OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
+    double const pixelRate = OScDev_Acquisition_GetPixelRate(acq);
+
+    ProcessingParams params{
+        .width = width,
+        .height = height,
+        .pixelTime_ps = std::llround(1e12 / pixelRate),
+        .numFrames = OScDev_Acquisition_GetNumberOfFrames(acq),
+        .lineClockChannel = data->lineClockChannel,
+        .syncChannel = data->syncChannel,
+        .photonLeadingChannel = data->photonChannel,
+        .photonTrailingChannel =
+            data->tagger->getInvertedChannel(data->photonChannel),
+        .syncDelay_ps = data->syncDelay_ps,
+        .lineDelay_ps = data->lineDelay_ps,
+        .maxPhotonPulseWidth_ps = data->maxPhotonPulseWidth_ps,
+        .maxDiffTime_ps = data->maxDiffTime_ps,
+        .cumulative = data->cumulative,
+        .histogramBins = data->histogramBins,
+        .histogramBinWidth_ps = data->histogramBinWidth_ps,
+        .histogramDumpFileName = std::nullopt,
+        .rawDataFileName = std::nullopt,
+    };
+
+    // File names follow OpenScan-BH_SPC's scheme (File Name Prefix setting
+    // + "_NNNN" index shared by all output files); see UniqueFileName.h.
+    if (data->saveHistograms || data->saveRawData) {
+        std::optional<std::string> const uniqueName =
+            UniqueFileName(data->fileNamePrefix, {".raw", ".hist"});
+        if (!uniqueName)
+            throw std::runtime_error(
+                "Could not find a unique file name for output files "
+                "(prefix '" +
+                data->fileNamePrefix + "')");
+        if (data->saveHistograms)
+            params.histogramDumpFileName = *uniqueName + ".hist";
+        if (data->saveRawData)
+            params.rawDataFileName = *uniqueName + ".raw";
+    }
+
+    return params;
+}
+
+FrameCallback MakeFrameCallback(OScDev_Acquisition *acq) {
+    return [acq](std::uint32_t channel, std::span<tcspc::u16 const> pixels) {
+        OScDev_Acquisition_CallFrameCallback(
+            acq, channel,
+            const_cast<void *>(static_cast<void const *>(pixels.data())));
+    };
+}
 
 std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
     std::vector<channel_t> channels;
@@ -20,7 +80,9 @@ std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
 
 AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
     : device_(device), ctx_(tcspc::context::create()),
-      processor_(MakeProcessingPipeline(GetData(device), acq, ctx_)),
+      processor_(
+          MakeProcessingPipeline(MakeProcessingParams(GetData(device), acq),
+                                 MakeFrameCallback(acq), ctx_)),
       processingThread_(
           ctx_->access<tcspc::buffer_accessor>(kTagBufferTrackerName),
           [this](ProcessingThread::Outcome outcome,

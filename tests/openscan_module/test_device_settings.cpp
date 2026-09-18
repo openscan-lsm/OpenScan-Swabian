@@ -46,7 +46,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 12);
+    REQUIRE(count == 13);
 
     SECTION("Sync Channel: default, range, and round-trip") {
         auto *s = FindSetting(settings, count, "Sync Channel");
@@ -79,8 +79,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(v == 1);
     }
 
-    SECTION("Sync Delay: defaults to zero and round-trips") {
-        auto *s = FindSetting(settings, count, "Sync Delay");
+    SECTION("Sync Delay (ps): defaults to zero and round-trips") {
+        auto *s = FindSetting(settings, count, "Sync Delay (ps)");
         REQUIRE(s != nullptr);
         int32_t v = -1;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -92,9 +92,9 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_SetInt32Value(s, 0), "restore");
     }
 
-    SECTION("Line Delay: defaults to zero and only allows non-negative "
+    SECTION("Line Delay (ps): defaults to zero and only allows non-negative "
             "values") {
-        auto *s = FindSetting(settings, count, "Line Delay");
+        auto *s = FindSetting(settings, count, "Line Delay (ps)");
         REQUIRE(s != nullptr);
         int32_t v = -1;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -105,10 +105,10 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(min == 0);
     }
 
-    SECTION("Max Photon Pulse Width and Max Diff Time defaults") {
+    SECTION("Max Photon Pulse Width (ps) and Max Diff Time (ps) defaults") {
         auto *pulseWidth =
-            FindSetting(settings, count, "Max Photon Pulse Width");
-        auto *diffTime = FindSetting(settings, count, "Max Diff Time");
+            FindSetting(settings, count, "Max Photon Pulse Width (ps)");
+        auto *diffTime = FindSetting(settings, count, "Max Diff Time (ps)");
         REQUIRE(pulseWidth != nullptr);
         REQUIRE(diffTime != nullptr);
 
@@ -116,12 +116,12 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_GetInt32Value(pulseWidth, &v), "get pulse width");
         CHECK(v == 100'000);
         CheckOk(OSc_Setting_GetInt32Value(diffTime, &v), "get diff time");
-        CHECK(v == 15'000);
+        CHECK(v == 12'500);
 
         int32_t min = -1, max = 0;
         CheckOk(OSc_Setting_GetInt32ContinuousRange(pulseWidth, &min, &max),
                 "range pulse width");
-        CHECK(min == 1); // must stay positive: a histogram bin_width divisor
+        CHECK(min == 1); // must stay positive
     }
 
     SECTION("Histogram Bins: default and discrete value set") {
@@ -139,6 +139,24 @@ TEST_CASE("device settings expose the expected names, defaults, and "
                                                512, 1024, 2048, 4096};
         std::vector<int32_t> const got(values, values + n);
         CHECK(got == expected);
+    }
+
+    SECTION("Histogram Bin Width (ps): default, range, and round-trip") {
+        auto *s = FindSetting(settings, count, "Histogram Bin Width (ps)");
+        REQUIRE(s != nullptr);
+        int32_t v = 0;
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
+        CHECK(v == 50);
+
+        int32_t min = 0, max = 0;
+        CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
+        CHECK(min == 1);
+        CHECK(max == 100'000);
+
+        CheckOk(OSc_Setting_SetInt32Value(s, 80), "set");
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
+        CHECK(v == 80);
+        CheckOk(OSc_Setting_SetInt32Value(s, 50), "restore");
     }
 
     SECTION("boolean settings default to false and round-trip") {
