@@ -3,6 +3,7 @@
 #include "TimeTaggerPrivate.h"
 #include "UniqueFileName.h"
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -20,7 +21,7 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
     ProcessingParams params{
         .width = width,
         .height = height,
-        .pixelTime_ps = static_cast<std::int64_t>(1e12 / pixelRate),
+        .pixelTime_ps = std::llround(1e12 / pixelRate),
         .numFrames = OScDev_Acquisition_GetNumberOfFrames(acq),
         .lineClockChannel = data->lineClockChannel,
         .syncChannel = data->syncChannel,
