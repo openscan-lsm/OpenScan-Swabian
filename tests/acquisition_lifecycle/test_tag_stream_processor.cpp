@@ -17,7 +17,7 @@ namespace {
 
 struct SinkState {
     int handled = 0;
-    int completeAfter = 0;  // 0: never
+    int completeAfter = 0; // 0: never
     bool failOnFirst = false;
     std::optional<tcspc::swabian_tag_event> last;
 };
@@ -105,8 +105,7 @@ TEST_CASE("TagStreamProcessor converts Tag to swabian_tag_event by layout",
 
     CHECK(processor.push({Tag(123456789LL, 7)}));
     REQUIRE(state->last.has_value());
-    CHECK(state->last->type() ==
-          tcspc::swabian_tag_event::tag_type::time_tag);
+    CHECK(state->last->type() == tcspc::swabian_tag_event::tag_type::time_tag);
     CHECK(state->last->channel().value() == 7);
     CHECK(state->last->time().value() == 123456789LL);
 }

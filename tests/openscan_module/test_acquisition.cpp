@@ -81,22 +81,22 @@ AcquisitionSetup RunAcquisition(
     OSc_FrameCallback callback, void *data,
     std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
     AcquisitionSetup run;
-    CheckOk(OSc_Device_GetSettings(fx.detector, &run.settings,
-                                   &run.settingCount),
-            "GetSettings");
-    CheckOk(OSc_Setting_SetInt32Value(
-                FindSetting(run.settings, run.settingCount, "Sync Channel"),
-                2),
-            "set Sync Channel");
-    CheckOk(OSc_Setting_SetInt32Value(
-                FindSetting(run.settings, run.settingCount, "Photon Channel"),
-                3),
-            "set Photon Channel");
-    CheckOk(OSc_Setting_SetInt32Value(
-                FindSetting(run.settings, run.settingCount,
-                            "Line Clock Channel"),
-                1),
-            "set Line Clock Channel");
+    CheckOk(
+        OSc_Device_GetSettings(fx.detector, &run.settings, &run.settingCount),
+        "GetSettings");
+    CheckOk(
+        OSc_Setting_SetInt32Value(
+            FindSetting(run.settings, run.settingCount, "Sync Channel"), 2),
+        "set Sync Channel");
+    CheckOk(
+        OSc_Setting_SetInt32Value(
+            FindSetting(run.settings, run.settingCount, "Photon Channel"), 3),
+        "set Photon Channel");
+    CheckOk(
+        OSc_Setting_SetInt32Value(
+            FindSetting(run.settings, run.settingCount, "Line Clock Channel"),
+            1),
+        "set Line Clock Channel");
     CheckOk(OSc_Setting_SetBoolValue(
                 FindSetting(run.settings, run.settingCount, "Cumulative"),
                 cumulative),
@@ -113,8 +113,7 @@ AcquisitionSetup RunAcquisition(
             "set pixel rate");
 
     OSc_Setting *resolutionSetting = nullptr;
-    CheckOk(OSc_AcqTemplate_GetResolutionSetting(run.tmpl,
-                                                 &resolutionSetting),
+    CheckOk(OSc_AcqTemplate_GetResolutionSetting(run.tmpl, &resolutionSetting),
             "GetResolutionSetting");
     CheckOk(OSc_Setting_SetInt32Value(resolutionSetting,
                                       static_cast<int32_t>(kResolution)),
@@ -164,18 +163,16 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
 
     // Assert noise-like qualities on the image
     auto const &px = capture.frames.front();
-    double const mean =
-        std::accumulate(px.begin(), px.end(), 0.0) /
-        static_cast<double>(px.size());
+    double const mean = std::accumulate(px.begin(), px.end(), 0.0) /
+                        static_cast<double>(px.size());
     CHECK(mean > 0);
 
-    double const variance =
-        std::accumulate(px.begin(), px.end(), 0.0,
-                        [mean](double acc, auto v) {
-                            double const d = v - mean;
-                            return acc + d * d;
-                        }) /
-        static_cast<double>(px.size());
+    double const variance = std::accumulate(px.begin(), px.end(), 0.0,
+                                            [mean](double acc, auto v) {
+                                                double const d = v - mean;
+                                                return acc + d * d;
+                                            }) /
+                            static_cast<double>(px.size());
     CHECK(std::sqrt(variance) > 0.5);
 
     // Cleanup
@@ -216,10 +213,10 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
 
     // Restore what this test mutated on the shared device (see
     // device_test_support.hpp's Environment comment).
-    CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Cumulative"),
-                false),
-            "restore Cumulative");
+    CheckOk(
+        OSc_Setting_SetBoolValue(
+            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
+        "restore Cumulative");
 }
 
 TEST_CASE("Save Raw Data writes every registered channel, including the "
@@ -244,11 +241,11 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     AcquisitionSetup run = RunAcquisition(
         fx, 1, false, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
-            CheckOk(OSc_Setting_SetStringValue(
-                        FindSetting(settings, settingCount,
-                                    "File Name Prefix"),
-                        prefix.c_str()),
-                    "set File Name Prefix");
+            CheckOk(
+                OSc_Setting_SetStringValue(
+                    FindSetting(settings, settingCount, "File Name Prefix"),
+                    prefix.c_str()),
+                "set File Name Prefix");
             CheckOk(OSc_Setting_SetBoolValue(
                         FindSetting(settings, settingCount, "Save Raw Data"),
                         true),
@@ -316,9 +313,9 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
                 FindSetting(run.settings, run.settingCount, "Save Raw Data"),
                 false),
             "restore Save Raw Data");
-    CheckOk(OSc_Setting_SetStringValue(
-                FindSetting(run.settings, run.settingCount,
-                            "File Name Prefix"),
-                "OpenScan-Swabian"),
-            "restore File Name Prefix");
+    CheckOk(
+        OSc_Setting_SetStringValue(
+            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
+            "OpenScan-Swabian"),
+        "restore File Name Prefix");
 }

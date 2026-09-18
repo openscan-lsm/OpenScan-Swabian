@@ -33,7 +33,8 @@ AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
                           .c_str());
                   break;
               case ProcessingThread::Outcome::Halted:
-                  OScDev_Log_Info(device_, ("AcquisitionRun: " + message).c_str());
+                  OScDev_Log_Info(device_,
+                                  ("AcquisitionRun: " + message).c_str());
                   break;
               case ProcessingThread::Outcome::Failed:
                   OScDev_Log_Error(
@@ -42,10 +43,9 @@ AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
                   break;
               }
           }),
-      measurement_(GetData(device)->tagger.get(),
-                   ChannelsToRegister(GetData(device)),
-                   [this](std::vector<Tag> const &tags) { return Push(tags); }) {
-}
+      measurement_(
+          GetData(device)->tagger.get(), ChannelsToRegister(GetData(device)),
+          [this](std::vector<Tag> const &tags) { return Push(tags); }) {}
 
 bool AcquisitionRun::isRunning() { return measurement_.isRunning(); }
 
@@ -61,14 +61,13 @@ bool AcquisitionRun::Push(std::vector<Tag> const &tags) {
     if (processor_.push(tags))
         return true;
     if (processor_.state() == TagStreamProcessor::State::Failed)
-        OScDev_Log_Error(
-            device_,
-            ("AcquisitionRun: pipeline error: " + processor_.message()).c_str());
+        OScDev_Log_Error(device_, ("AcquisitionRun: pipeline error: " +
+                                   processor_.message())
+                                      .c_str());
     else
-        OScDev_Log_Info(
-            device_,
-            ("AcquisitionRun: acquisition complete: " + processor_.message())
-                .c_str());
+        OScDev_Log_Info(device_, ("AcquisitionRun: acquisition complete: " +
+                                  processor_.message())
+                                     .c_str());
     // libtcspc requires halting the buffer when the upstream ends without
     // flushing it; harmless if the consumer has already exited.
     processingThread_.halt();

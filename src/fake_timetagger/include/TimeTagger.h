@@ -53,7 +53,7 @@ constexpr timestamp_t SIMULATED_PHOTON_GATE_WIDTH_PS = 10'000;
 constexpr double SIMULATED_PHOTON_GATE_RATE_HZ = 1e8;
 
 class IteratorBase; // Full definition below, after TimeTaggerBase; only
-                     // used by pointer/reference up to that point.
+                    // used by pointer/reference up to that point.
 
 struct SoftwareClockState {
     timestamp_t clock_period = 0;
@@ -130,7 +130,7 @@ class TimeTaggerBase {
     }
 
     void setConditionalFilter(std::vector<channel_t> trigger,
-                               std::vector<channel_t> filtered) {
+                              std::vector<channel_t> filtered) {
         conditionalFilterTrigger_ = std::move(trigger);
         conditionalFilterFiltered_ = std::move(filtered);
     }
@@ -158,10 +158,11 @@ class TimeTaggerBase {
     }
     void clearOverflows() { overflowCount_ = 0; }
 
-    void setReferenceClock(channel_t clock_channel, double clock_frequency = 10e6,
-                            double = 1e-3,
-                            channel_t synchronization_channel = CHANNEL_UNUSED,
-                            timestamp_t synchronization_offset = 0, bool = true) {
+    void setReferenceClock(channel_t clock_channel,
+                           double clock_frequency = 10e6, double = 1e-3,
+                           channel_t synchronization_channel = CHANNEL_UNUSED,
+                           timestamp_t synchronization_offset = 0,
+                           bool = true) {
         referenceClockState_.clock_channel = clock_channel;
         referenceClockState_.clock_period =
             static_cast<timestamp_t>(1e12 / clock_frequency);
@@ -177,8 +178,9 @@ class TimeTaggerBase {
 
     // --- from the real SDK's TimeTaggerBase -----------------------------
 
-    void setSoftwareClock(channel_t input_channel, double input_frequency = 10e6,
-                           double averaging_periods = 1000, bool = true) {
+    void setSoftwareClock(channel_t input_channel,
+                          double input_frequency = 10e6,
+                          double averaging_periods = 1000, bool = true) {
         softwareClockState_.input_channel = input_channel;
         softwareClockState_.clock_period =
             static_cast<timestamp_t>(1e12 / input_frequency);
@@ -279,9 +281,9 @@ inline bool operator==(Tag const &a, Tag const &b) {
 // this project actually wires up -- and delivers them via next_impl(). This
 // is enough to
 // exercise a real next_impl()-based acquisition design under simulate=true
-// without hardware; it does not model getCaptureDuration(), getConfiguration(),
-// virtual-channel allocation, or startFor()'s auto-stop-after-duration
-// (nothing in this project uses those yet).
+// without hardware; it does not model getCaptureDuration(),
+// getConfiguration(), virtual-channel allocation, or startFor()'s
+// auto-stop-after-duration (nothing in this project uses those yet).
 //
 // IMPORTANT, and true of the real SDK too: the pump thread calls next_impl()
 // (a pure virtual) until stop() has fully returned. Because base-class
@@ -352,7 +354,7 @@ class IteratorBase {
     // directly.
     bool waitUntilFinished(std::int64_t timeoutMs = -1) {
         auto const deadline = std::chrono::steady_clock::now() +
-                               std::chrono::milliseconds(timeoutMs);
+                              std::chrono::milliseconds(timeoutMs);
         while (running_) {
             if (timeoutMs >= 0 && std::chrono::steady_clock::now() >= deadline)
                 return false;
@@ -367,8 +369,8 @@ class IteratorBase {
     // `tagger` member; kept for the same reason even though nothing in
     // this fake's own PumpLoop needs to read it back.
     explicit IteratorBase(TimeTaggerBase *tagger,
-                           std::string const & /*base_type_*/ = "IteratorBase",
-                           std::string const & /*extra_info_*/ = "")
+                          std::string const & /*base_type_*/ = "IteratorBase",
+                          std::string const & /*extra_info_*/ = "")
         : tagger_(tagger) {}
 
     void registerChannel(channel_t channel) {
@@ -377,10 +379,10 @@ class IteratorBase {
     }
     void unregisterChannel(channel_t channel) {
         auto lock = getLock();
-        registeredChannels_.erase(
-            std::remove(registeredChannels_.begin(),
-                        registeredChannels_.end(), channel),
-            registeredChannels_.end());
+        registeredChannels_.erase(std::remove(registeredChannels_.begin(),
+                                              registeredChannels_.end(),
+                                              channel),
+                                  registeredChannels_.end());
     }
 
     void finishInitialization() { start(); }
@@ -397,15 +399,15 @@ class IteratorBase {
     //
     // Ensures no further data is delivered (PumpLoop's while(running_)
     // check will see this on its next iteration and exit), but leaves
-    // pumpThread_ unjoined -- a later stop() (e.g. from ~TagStreamMeasurement()
-    // or an explicit Stop()) still needs to run to actually join it and
-    // call on_stop(). Until then, isRunning() correctly reports false
-    // even though the object is still alive, matching how BH's acqState
-    // stays alive after an acquisition finishes on its own.
+    // pumpThread_ unjoined -- a later stop() (e.g. from
+    // ~TagStreamMeasurement() or an explicit Stop()) still needs to run to
+    // actually join it and call on_stop(). Until then, isRunning() correctly
+    // reports false even though the object is still alive, matching how BH's
+    // acqState stays alive after an acquisition finishes on its own.
     void finish_running() { running_ = false; }
 
     virtual bool next_impl(std::vector<Tag> &incoming_tags,
-                            timestamp_t begin_time, timestamp_t end_time) = 0;
+                           timestamp_t begin_time, timestamp_t end_time) = 0;
     virtual void clear_impl() {}
     virtual void on_start() {}
     virtual void on_stop() {}
@@ -455,15 +457,17 @@ class IteratorBase {
 
             auto const now = std::chrono::steady_clock::now();
             double const elapsedS =
-                std::chrono::duration_cast<std::chrono::duration<double>>(
-                    now - last)
+                std::chrono::duration_cast<std::chrono::duration<double>>(now -
+                                                                          last)
                     .count();
             last = now;
             elapsedPs += elapsedS * 1e12;
             double const generateUntilPs =
                 std::min(elapsedPs, nextFrameBoundaryPs);
-            timestamp_t const beginTime = static_cast<timestamp_t>(generatedPs);
-            timestamp_t const endTime = static_cast<timestamp_t>(generateUntilPs);
+            timestamp_t const beginTime =
+                static_cast<timestamp_t>(generatedPs);
+            timestamp_t const endTime =
+                static_cast<timestamp_t>(generateUntilPs);
 
             auto lock = getLock();
             if (!running_)
@@ -530,7 +534,7 @@ class IteratorBase {
                         static_cast<double>(SIMULATED_PHOTON_GATE_WIDTH_PS)) {
                         if (photonPosRegistered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
-                                                PHOTON_CHANNEL);
+                                               PHOTON_CHANNEL);
                         if (photonNegRegistered)
                             batch.emplace_back(
                                 static_cast<timestamp_t>(
@@ -544,7 +548,8 @@ class IteratorBase {
                         // is not physically possible for a real detector
                         // pulse (a single digital line's edges must
                         // strictly alternate).
-                        t += static_cast<double>(SIMULATED_PHOTON_PULSE_WIDTH_PS) +
+                        t += static_cast<double>(
+                                 SIMULATED_PHOTON_PULSE_WIDTH_PS) +
                              drawPositivePs();
                     } else {
                         // Past this period's gate -- jump to the start of
@@ -577,8 +582,7 @@ class IteratorBase {
                 // See the same check in the gated-photon loop above.
                 if (!running_)
                     break;
-                if (channel == PHOTON_CHANNEL ||
-                    channel == -PHOTON_CHANNEL)
+                if (channel == PHOTON_CHANNEL || channel == -PHOTON_CHANNEL)
                     continue; // handled above, as a correlated gated pair
 
                 // Hardcoded simulated line-clock/sync signals (see the
@@ -623,18 +627,20 @@ class IteratorBase {
 
                 auto it = nextArrivalPs.find(channel);
                 if (it == nextArrivalPs.end()) {
-                    it = nextArrivalPs
-                             .emplace(channel, static_cast<double>(phaseOffset))
-                             .first;
+                    it =
+                        nextArrivalPs
+                            .emplace(channel, static_cast<double>(phaseOffset))
+                            .first;
                 }
                 while (running_ && it->second < generateUntilPs) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
-                                        channel);
+                                       channel);
                     it->second += static_cast<double>(period);
                 }
             }
-            std::sort(batch.begin(), batch.end(),
-                      [](Tag const &a, Tag const &b) { return a.time < b.time; });
+            std::sort(
+                batch.begin(), batch.end(),
+                [](Tag const &a, Tag const &b) { return a.time < b.time; });
 
             next_impl(batch, beginTime, endTime);
             generatedPs = generateUntilPs;
@@ -675,7 +681,7 @@ inline constexpr char FAKE_MODEL[] = "Simulated Time Tagger";
 inline TimeTaggerBase *createTimeTagger(std::string const &serial = "") {
     if (!serial.empty() && serial != FAKE_SERIAL) {
         throw std::runtime_error("No Time Tagger device with serial '" +
-                                  serial + "' found");
+                                 serial + "' found");
     }
     return new TimeTaggerBase();
 }
@@ -699,7 +705,7 @@ inline std::vector<std::string> scanTimeTagger(bool includeModelName = false) {
 inline std::string getTimeTaggerModel(std::string const &serial) {
     if (serial != FAKE_SERIAL) {
         throw std::runtime_error("No Time Tagger device with serial '" +
-                                  serial + "' found");
+                                 serial + "' found");
     }
     return FAKE_MODEL;
 }

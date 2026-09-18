@@ -46,7 +46,8 @@ TEST_CASE("conditional filter round-trips and can be cleared",
           "[TimeTaggerBase]") {
     TimeTaggerBase tagger;
     tagger.setConditionalFilter({1, 2}, {3, 4});
-    CHECK(tagger.getConditionalFilterTrigger() == std::vector<channel_t>{1, 2});
+    CHECK(tagger.getConditionalFilterTrigger() ==
+          std::vector<channel_t>{1, 2});
     CHECK(tagger.getConditionalFilterFiltered() ==
           std::vector<channel_t>{3, 4});
 

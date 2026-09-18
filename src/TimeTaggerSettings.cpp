@@ -1,18 +1,16 @@
 #include "TimeTaggerPrivate.h"
-#include <TimeTagger.h>
 #include <OpenScanDeviceLib.h>
+#include <TimeTagger.h>
 
 #include <cstring>
 #include <limits>
 
-static TimeTagger_PrivateData *
-GetSettingDeviceData(OScDev_Setting *setting) {
+static TimeTagger_PrivateData *GetSettingDeviceData(OScDev_Setting *setting) {
     return static_cast<TimeTagger_PrivateData *>(OScDev_Device_GetImplData(
         (OScDev_Device *)OScDev_Setting_GetImplData(setting)));
 }
 
-template <int32_t TimeTagger_PrivateData::*Member>
-class ChannelSetting {
+template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
     static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
         *value = GetSettingDeviceData(setting)->*Member;
         return OScDev_OK;
@@ -21,23 +19,25 @@ class ChannelSetting {
         GetSettingDeviceData(setting)->*Member = value;
         return OScDev_OK;
     }
-    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
         *constraintType = OScDev_ValueConstraint_Range;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
-        *min = 1; *max = 8; // TODO: Get the actual number of channels from the device
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
+        *min = 1;
+        *max = 8; // TODO: Get the actual number of channels from the device
         return OScDev_OK;
     }
 
-public:
-    static inline OScDev_SettingImpl impl = {
-        .GetNumericConstraintType = GetNumericConstraintType,
-        .GetInt32 = Get,
-        .SetInt32 = Set,
-        .GetInt32Range = GetRange
-    };
-
+  public:
+    static inline OScDev_SettingImpl impl = {.GetNumericConstraintType =
+                                                 GetNumericConstraintType,
+                                             .GetInt32 = Get,
+                                             .SetInt32 = Set,
+                                             .GetInt32Range = GetRange};
 };
 
 class SyncDelaySetting {
@@ -50,7 +50,7 @@ class SyncDelaySetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetInt32 = Get,
         .SetInt32 = Set,
@@ -66,18 +66,21 @@ class LineDelaySetting {
         GetSettingDeviceData(setting)->lineDelay_ps = value;
         return OScDev_OK;
     }
-    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
         *constraintType = OScDev_ValueConstraint_Range;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
         // Line delay should be non-negative integers
         *min = 0;
         *max = std::numeric_limits<int32_t>::max();
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
@@ -95,17 +98,21 @@ class MaxPhotonPulseWidthSetting {
         GetSettingDeviceData(setting)->maxPhotonPulseWidth_ps = value;
         return OScDev_OK;
     }
-    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
         *constraintType = OScDev_ValueConstraint_Range;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
         // Widths should be positive integers
         *min = 1;
         *max = std::numeric_limits<int32_t>::max();
         return OScDev_OK;
     }
-public:
+
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
@@ -123,11 +130,14 @@ class MaxDiffTimeSetting {
         GetSettingDeviceData(setting)->maxDiffTime_ps = value;
         return OScDev_OK;
     }
-    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
         *constraintType = OScDev_ValueConstraint_Range;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
         // Must be positive: it's used as a histogram bin_width divisor and
         // as a pair_all_between time_window in Processing.cpp, both of
         // which are nonsensical (or crash-prone) at zero or negative.
@@ -136,7 +146,7 @@ class MaxDiffTimeSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
@@ -155,7 +165,7 @@ class SaveHistogramsSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetBool = Get,
         .SetBool = Set,
@@ -171,11 +181,14 @@ class HistogramBinsSetting {
         GetSettingDeviceData(setting)->histogramBins = value;
         return OScDev_OK;
     }
-    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
         *constraintType = OScDev_ValueConstraint_DiscreteValues;
         return OScDev_OK;
     }
-    static OScDev_Error GetDiscreteValues(OScDev_Setting *, OScDev_NumArray **values) {
+    static OScDev_Error GetDiscreteValues(OScDev_Setting *,
+                                          OScDev_NumArray **values) {
         // A discrete range is enforced, but purely for convenience
         // (i.e. no reason I know of that we couldn't widen it later).
         static const int32_t valuesArray[] = {
@@ -188,7 +201,7 @@ class HistogramBinsSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
@@ -207,7 +220,7 @@ class CumulativeSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetBool = Get,
         .SetBool = Set,
@@ -224,7 +237,7 @@ class SaveRawDataSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetBool = Get,
         .SetBool = Set,
@@ -243,167 +256,122 @@ class FileNamePrefixSetting {
         return OScDev_OK;
     }
 
-public:
+  public:
     static inline OScDev_SettingImpl impl = {
         .GetString = Get,
         .SetString = Set,
     };
 };
 
-OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **settings) {
+OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
+                                     OScDev_PtrArray **settings) {
     OScDev_RichError *err = OScDev_RichError_OK;
     *settings = OScDev_PtrArray_Create();
 
     OScDev_Setting *s;
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Sync Channel",
-        OScDev_ValueType_Int32,
-        &ChannelSetting<&TimeTagger_PrivateData::syncChannel>::impl,
-        device
-    ));
+        &s, "Sync Channel", OScDev_ValueType_Int32,
+        &ChannelSetting<&TimeTagger_PrivateData::syncChannel>::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Photon Channel",
-        OScDev_ValueType_Int32,
+        &s, "Photon Channel", OScDev_ValueType_Int32,
         &ChannelSetting<&TimeTagger_PrivateData::photonChannel>::impl,
-        device
-    ));
+        device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Line Clock Channel",
-        OScDev_ValueType_Int32,
+        &s, "Line Clock Channel", OScDev_ValueType_Int32,
         &ChannelSetting<&TimeTagger_PrivateData::lineClockChannel>::impl,
-        device
-    ));
+        device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Sync Delay", OScDev_ValueType_Int32,
+                              &SyncDelaySetting::impl, device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Line Delay", OScDev_ValueType_Int32,
+                              &LineDelaySetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Sync Delay",
-        OScDev_ValueType_Int32,
-        &SyncDelaySetting::impl,
-        device
-    ));
+        &s, "Max Photon Pulse Width", OScDev_ValueType_Int32,
+        &MaxPhotonPulseWidthSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Line Delay",
-        OScDev_ValueType_Int32,
-        &LineDelaySetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Max Diff Time", OScDev_ValueType_Int32,
+                              &MaxDiffTimeSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Max Photon Pulse Width",
-        OScDev_ValueType_Int32,
-        &MaxPhotonPulseWidthSetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Save Histograms", OScDev_ValueType_Bool,
+                              &SaveHistogramsSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Max Diff Time",
-        OScDev_ValueType_Int32,
-        &MaxDiffTimeSetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Histogram Bins", OScDev_ValueType_Int32,
+                              &HistogramBinsSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Save Histograms",
-        OScDev_ValueType_Bool,
-        &SaveHistogramsSetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Cumulative", OScDev_ValueType_Bool,
+                              &CumulativeSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Histogram Bins",
-        OScDev_ValueType_Int32,
-        &HistogramBinsSetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Save Raw Data", OScDev_ValueType_Bool,
+                              &SaveRawDataSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
 
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Cumulative",
-        OScDev_ValueType_Bool,
-        &CumulativeSetting::impl,
-        device
-    ));
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "File Name Prefix", OScDev_ValueType_String,
+                              &FileNamePrefixSetting::impl, device));
     if (err) {
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
-
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Save Raw Data",
-        OScDev_ValueType_Bool,
-        &SaveRawDataSetting::impl,
-        device
-    ));
-    if (err) {
-        goto error;
-    }
-    OScDev_PtrArray_Append(*settings, s);
-
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "File Name Prefix",
-        OScDev_ValueType_String,
-        &FileNamePrefixSetting::impl,
-        device
-    ));
-    if (err) {
-        goto error;
-    }
-    OScDev_PtrArray_Append(*settings, s);
-
 
     return OScDev_OK;
 error:
     for (size_t i = 0; i < OScDev_PtrArray_Size(*settings); ++i) {
-        OScDev_Setting_Destroy((OScDev_Setting *)OScDev_PtrArray_At(*settings, i));
+        OScDev_Setting_Destroy(
+            (OScDev_Setting *)OScDev_PtrArray_At(*settings, i));
     }
     OScDev_PtrArray_Destroy(*settings);
     *settings = NULL;

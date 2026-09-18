@@ -6,10 +6,11 @@
 #include <vector>
 
 // A minimal concrete IteratorBase that just accumulates every tag batch
-// PumpLoop hands it 
+// PumpLoop hands it
 class CollectingIterator : public IteratorBase {
   public:
-    explicit CollectingIterator(TimeTaggerBase *tagger) : IteratorBase(tagger) {}
+    explicit CollectingIterator(TimeTaggerBase *tagger)
+        : IteratorBase(tagger) {}
     ~CollectingIterator() override { stop(); }
 
     using IteratorBase::registerChannel;
@@ -22,7 +23,7 @@ class CollectingIterator : public IteratorBase {
 
   protected:
     bool next_impl(std::vector<Tag> &incoming_tags, timestamp_t /*begin_time*/,
-                    timestamp_t /*end_time*/) override {
+                   timestamp_t /*end_time*/) override {
         std::lock_guard<std::mutex> lock(mutex_);
         tags_.insert(tags_.end(), incoming_tags.begin(), incoming_tags.end());
         return false;

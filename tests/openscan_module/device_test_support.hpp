@@ -130,7 +130,7 @@ struct LSMFixture {
 };
 
 inline OSc_Setting *FindSetting(OSc_Setting **settings, size_t count,
-                                 std::string const &name) {
+                                std::string const &name) {
     for (size_t i = 0; i < count; ++i) {
         char buf[OSc_MAX_STR_SIZE];
         CheckOk(OSc_Setting_GetName(settings[i], buf), "OSc_Setting_GetName");

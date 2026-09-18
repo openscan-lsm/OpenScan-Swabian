@@ -13,12 +13,18 @@ static OScDev_Error TimeTagger_GetName(OScDev_Device *device, char *name);
 static OScDev_Error TimeTagger_Open(OScDev_Device *device);
 static OScDev_Error TimeTagger_Close(OScDev_Device *device);
 static OScDev_Error TimeTagger_HasClock(OScDev_Device *device, bool *hasClock);
-static OScDev_Error TimeTagger_HasScanner(OScDev_Device *device, bool *hasScanner);
-static OScDev_Error TimeTagger_HasDetector(OScDev_Device *device, bool *hasDetector);
-static OScDev_Error TimeTagger_GetPixelRates(OScDev_Device *device, OScDev_NumRange **pixelRatesHz);
-static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *device, uint32_t *numChannels);
-static OScDev_Error TimeTagger_GetBytesPerSample(OScDev_Device *device, uint32_t *bytesPerSample);
-static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acquisition);
+static OScDev_Error TimeTagger_HasScanner(OScDev_Device *device,
+                                          bool *hasScanner);
+static OScDev_Error TimeTagger_HasDetector(OScDev_Device *device,
+                                           bool *hasDetector);
+static OScDev_Error TimeTagger_GetPixelRates(OScDev_Device *device,
+                                             OScDev_NumRange **pixelRatesHz);
+static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *device,
+                                                   uint32_t *numChannels);
+static OScDev_Error TimeTagger_GetBytesPerSample(OScDev_Device *device,
+                                                 uint32_t *bytesPerSample);
+static OScDev_Error Arm(OScDev_Device *device,
+                        OScDev_Acquisition *acquisition);
 static OScDev_Error Start(OScDev_Device *device);
 static OScDev_Error Stop(OScDev_Device *device);
 static OScDev_Error IsRunning(OScDev_Device *device, bool *isRunning);
@@ -44,7 +50,6 @@ static OScDev_DeviceImpl SwabianTimeTaggerImpl = {
     .IsRunning = IsRunning,
     .Wait = Wait,
 };
-
 
 static OScDev_Error TimeTagger_GetModelName(const char **name) {
     *name = "Swabian Time Tagger";
@@ -77,15 +82,13 @@ static OScDev_Error TimeTagger_EnumerateInstances(OScDev_PtrArray **devices) {
     for (const std::string &serial : serials) {
         OScDev_Device *device;
         TimeTagger_PrivateData *data = new TimeTagger_PrivateData{serial};
-        OScDev_RichError *err = OScDev_Error_AsRichError(OScDev_Device_Create(&device, &SwabianTimeTaggerImpl, data));
+        OScDev_RichError *err = OScDev_Error_AsRichError(
+            OScDev_Device_Create(&device, &SwabianTimeTaggerImpl, data));
         if (err) {
             delete data; // This one was never handed to OpenScanLib
-            return OScDev_Error_ReturnAsCode(
-                OScDev_Error_Wrap(
-                    err,
-                    ("Failed to create device for serial " + serial).c_str()
-                )
-            );
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Wrap(
+                err,
+                ("Failed to create device for serial " + serial).c_str()));
         }
         OScDev_PtrArray_Append(*devices, device);
     }
@@ -113,8 +116,9 @@ static OScDev_Error TimeTagger_GetName(OScDev_Device *device, char *name) {
 static OScDev_Error TimeTagger_Open(OScDev_Device *device) {
     TimeTagger_PrivateData *data = GetData(device);
     try {
-        data->tagger = std::unique_ptr<TimeTaggerBase, void(*)(TimeTaggerBase *)>{
-            createTimeTagger(data->serial), &freeTimeTagger };
+        data->tagger =
+            std::unique_ptr<TimeTaggerBase, void (*)(TimeTaggerBase *)>{
+                createTimeTagger(data->serial), &freeTimeTagger};
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
@@ -139,24 +143,29 @@ static OScDev_Error TimeTagger_HasScanner(OScDev_Device *, bool *hasScanner) {
     return OScDev_OK;
 }
 
-static OScDev_Error TimeTagger_HasDetector(OScDev_Device *, bool *hasDetector) {
+static OScDev_Error TimeTagger_HasDetector(OScDev_Device *,
+                                           bool *hasDetector) {
     *hasDetector = true;
     return OScDev_OK;
 }
 
-static OScDev_Error TimeTagger_GetPixelRates(OScDev_Device *, OScDev_NumRange **pixelRatesHz) {
-    // These values are arbitrary but should cover most reasonable acquisitions.
+static OScDev_Error TimeTagger_GetPixelRates(OScDev_Device *,
+                                             OScDev_NumRange **pixelRatesHz) {
+    // These values are arbitrary but should cover most reasonable
+    // acquisitions.
     *pixelRatesHz = OScDev_NumRange_CreateContinuous(1e3, 1e7);
     return OScDev_OK;
 }
 
-static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *, uint32_t *numChannels) {
+static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *,
+                                                   uint32_t *numChannels) {
     // TODO Support multiple channels
     *numChannels = 1;
     return OScDev_OK;
 }
 
-static OScDev_Error TimeTagger_GetBytesPerSample(OScDev_Device *, uint32_t *bytesPerSample) {
+static OScDev_Error TimeTagger_GetBytesPerSample(OScDev_Device *,
+                                                 uint32_t *bytesPerSample) {
     *bytesPerSample = 2;
     return OScDev_OK;
 }
@@ -204,14 +213,16 @@ static OScDev_Error Stop(OScDev_Device *device) {
 }
 
 static OScDev_Error IsRunning(OScDev_Device *device, bool *isRunning) {
-    auto& run = GetData(device)->run;
+    auto &run = GetData(device)->run;
     *isRunning = run && run->isRunning();
-    OScDev_Log_Info(device, ("Swabian Time Tagger acquisition is running: " + std::string(*isRunning ? "true" : "false")).c_str());
+    OScDev_Log_Info(device, ("Swabian Time Tagger acquisition is running: " +
+                             std::string(*isRunning ? "true" : "false"))
+                                .c_str());
     return OScDev_OK;
 }
 
 static OScDev_Error Wait(OScDev_Device *device) {
-    auto& run = GetData(device)->run;
+    auto &run = GetData(device)->run;
     if (run) {
         run->waitUntilFinished();
     }
@@ -219,7 +230,7 @@ static OScDev_Error Wait(OScDev_Device *device) {
 }
 
 static OScDev_Error GetDeviceImpls(OScDev_PtrArray **impls) {
-    void *devImpls[] = { &SwabianTimeTaggerImpl, nullptr };
+    void *devImpls[] = {&SwabianTimeTaggerImpl, nullptr};
     *impls = OScDev_PtrArray_CreateFromNullTerminated(devImpls);
     return OScDev_OK;
 }
