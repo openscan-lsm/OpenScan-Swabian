@@ -2,15 +2,15 @@
 
 #include "AcquisitionRun.h"
 
+#include <OpenScanDeviceLib.h>
+#include <TimeTagger.h>
 #include <memory>
 #include <string>
-#include <TimeTagger.h>
-#include <OpenScanDeviceLib.h>
 
 struct TimeTagger_PrivateData {
     std::string serial;
-    std::unique_ptr<TimeTaggerBase, void(*)(TimeTaggerBase *)> tagger =
-        {nullptr, nullptr};
+    std::unique_ptr<TimeTaggerBase, void (*)(TimeTaggerBase *)> tagger = {
+        nullptr, nullptr};
     std::unique_ptr<AcquisitionRun> run = nullptr;
 
     int32_t lineClockChannel = 1;
@@ -31,7 +31,9 @@ struct TimeTagger_PrivateData {
 };
 
 inline TimeTagger_PrivateData *GetData(OScDev_Device *device) {
-    return static_cast<TimeTagger_PrivateData *>(OScDev_Device_GetImplData(device));
+    return static_cast<TimeTagger_PrivateData *>(
+        OScDev_Device_GetImplData(device));
 }
 
-OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **settings);
+OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
+                                     OScDev_PtrArray **settings);

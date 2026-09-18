@@ -26,7 +26,7 @@ constexpr timestamp_t kLinePeriodPs =
     SIMULATED_LINE_WIDTH_PIXELS * SIMULATED_PIXEL_PERIOD_PS;
 
 std::vector<Tag> Collect(std::vector<channel_t> const &channels,
-                          std::chrono::milliseconds duration) {
+                         std::chrono::milliseconds duration) {
     TimeTaggerBase tagger;
     CollectingIterator iter(&tagger);
     for (channel_t const ch : channels)
@@ -42,7 +42,7 @@ TEST_CASE("LINE_CLOCK_CHANNEL emits alternating edges with periodic rising "
           "edges",
           "[data]") {
     auto const tags = Collect({LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL},
-                               std::chrono::milliseconds(150));
+                              std::chrono::milliseconds(150));
     REQUIRE(tags.size() > 1);
 
     // Ensure we start with a rising edge and alternate from there
@@ -104,7 +104,7 @@ TEST_CASE("PHOTON_CHANNEL emits alternating edges with a positive pulse "
           "width",
           "[data]") {
     auto const tags = Collect({PHOTON_CHANNEL, -PHOTON_CHANNEL},
-                               std::chrono::milliseconds(50));
+                              std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 1);
 
     // Ensure we start with a rising edge and alternate from there
@@ -127,14 +127,15 @@ TEST_CASE("PHOTON_CHANNEL emits alternating edges with a positive pulse "
 TEST_CASE("Every photon detection follows, and is close to, the most "
           "recent sync pulse",
           "[data]") {
-    auto const tags = Collect({SYNC_CHANNEL, PHOTON_CHANNEL},
-                               std::chrono::milliseconds(50));
+    auto const tags =
+        Collect({SYNC_CHANNEL, PHOTON_CHANNEL}, std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 0);
 
     // The current implementation of the fake_timetagger generates photons
-    // first, then sync pulses. We might stop the collection after generating the photons
-    // for a pixel but before the sync pulse for that pixel, so the last sync pulse may
-    // be missing from the collection -- only check photons up to that point.
+    // first, then sync pulses. We might stop the collection after generating
+    // the photons for a pixel but before the sync pulse for that pixel, so the
+    // last sync pulse may be missing from the collection -- only check photons
+    // up to that point.
     timestamp_t last_overall_sync_time = -1;
     for (auto const &t : tags)
         if (t.channel == SYNC_CHANNEL)
@@ -151,9 +152,11 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
         // Ignore photons that occur after the last sync pulse
         if (t.time > last_overall_sync_time)
             continue;
-        REQUIRE(last_sync_time.has_value()); // no photon before the first sync pulse
+        REQUIRE(last_sync_time
+                    .has_value()); // no photon before the first sync pulse
         CHECK(t.time > *last_sync_time); // causality
-        CHECK(t.time - *last_sync_time < SIMULATED_PIXEL_PERIOD_PS); // not absurdly late
+        CHECK(t.time - *last_sync_time <
+              SIMULATED_PIXEL_PERIOD_PS); // not absurdly late
     }
 }
 
@@ -161,8 +164,8 @@ TEST_CASE("Tags across simultaneously-registered channels are delivered in "
           "non-decreasing time order",
           "[data]") {
     auto const tags =
-        Collect({LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL, SYNC_CHANNEL, -SYNC_CHANNEL, PHOTON_CHANNEL,
-                  -PHOTON_CHANNEL, 99},
+        Collect({LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL, SYNC_CHANNEL,
+                 -SYNC_CHANNEL, PHOTON_CHANNEL, -PHOTON_CHANNEL, 99},
                 std::chrono::milliseconds(30));
     REQUIRE(tags.size() > 10);
     for (size_t i = 1; i < tags.size(); ++i)

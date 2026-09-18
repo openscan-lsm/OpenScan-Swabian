@@ -19,9 +19,10 @@ class CallFrameCallbackSink {
     uint32_t channel_;
     uint32_t numFrames_;
     uint32_t framesDelivered_ = 0;
-public:
+
+  public:
     CallFrameCallbackSink(OScDev_Acquisition *acq, uint32_t channel,
-                           uint32_t numFrames)
+                          uint32_t numFrames)
         : acq_(acq), channel_(channel), numFrames_(numFrames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
@@ -45,11 +46,10 @@ public:
         return tcspc::processor_graph().push_entry_point(this);
     }
 
-private:
+  private:
     template <typename Bucket> void handle_bucket(Bucket const &data_bucket) {
         OScDev_Acquisition_CallFrameCallback(
-            acq_,
-            channel_,
+            acq_, channel_,
             const_cast<void *>(static_cast<void const *>(data_bucket.data())));
         // Same idea as BH's LineClockPixellator calling downstream->
         // HandleFinish() once currentLine / linesPerFrame == maxFrames --
@@ -73,7 +73,7 @@ private:
 // the live/intensity branch (CallFrameCallbackSink) owns that. Remove, or
 // replace with real FLIM file output, once no longer needed.
 class HistogramDumpSink {
-public:
+  public:
     void handle(tcspc::histogram_array_event<> const &event) {
         dump_bucket(event.data_bucket);
     }
@@ -96,15 +96,14 @@ public:
         return tcspc::processor_graph().push_entry_point(this);
     }
 
-private:
+  private:
     template <typename Bucket> void dump_bucket(Bucket const &data_bucket) {
         std::ofstream debug_file(
             "C:\\Users\\gjselzer\\code\\openscan-lsm\\OpenScan-Swabian\\histogram_debug.bin",
             std::ios::binary | std::ios::trunc);
-        debug_file.write(
-            reinterpret_cast<char const *>(data_bucket.data()),
-            static_cast<std::streamsize>(data_bucket.size() *
-                                          sizeof(tcspc::u16)));
+        debug_file.write(reinterpret_cast<char const *>(data_bucket.data()),
+                         static_cast<std::streamsize>(data_bucket.size() *
+                                                      sizeof(tcspc::u16)));
     }
 };
 
@@ -124,17 +123,18 @@ private:
 // physical event stream feeding every consumer either way.
 class RawTagDumpSink {
     std::ofstream file_;
-public:
+
+  public:
     explicit RawTagDumpSink(std::string const &filename)
         : file_(filename, std::ios::binary | std::ios::trunc) {
         if (!file_)
-            throw std::runtime_error(
-                "RawTagDumpSink: could not open file '" + filename + "'");
+            throw std::runtime_error("RawTagDumpSink: could not open file '" +
+                                     filename + "'");
     }
 
     void handle(tcspc::swabian_tag_event const &event) {
         file_.write(reinterpret_cast<char const *>(event.bytes.data()),
-                     static_cast<std::streamsize>(event.bytes.size()));
+                    static_cast<std::streamsize>(event.bytes.size()));
     }
     void flush() { file_.flush(); }
 
@@ -150,11 +150,9 @@ public:
 // Full per-pixel histogram (histogramBins bins/pixel) -- debug-dumped to
 // disk, not sent to OpenScanLib. See HistogramDumpSink's comment.
 template <bool Cumulative>
-auto make_full_histo_proc(
-    TimeTagger_PrivateData *data,
-    OScDev_Acquisition *acq,
-    std::shared_ptr<tcspc::context> const &ctx
-) {
+auto make_full_histo_proc(TimeTagger_PrivateData *data,
+                          OScDev_Acquisition *acq,
+                          std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
@@ -180,7 +178,7 @@ auto make_full_histo_proc(
             select<type_list<histogram_array_event<>>>(
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
-                        HistogramDumpSink())));
+                    HistogramDumpSink())));
     }
 }
 
@@ -191,11 +189,9 @@ auto make_full_histo_proc(
 template <bool Cumulative>
 auto make_live_histo_proc(
     TimeTagger_PrivateData * /*data*/, // unused: the intensity branch's
-                                        // binning is fixed (1 bin, clamped),
-                                        // not derived from histogramBins
-    OScDev_Acquisition *acq,
-    std::shared_ptr<tcspc::context> const &ctx
-) {
+                                       // binning is fixed (1 bin, clamped),
+                                       // not derived from histogramBins
+    OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
@@ -205,25 +201,21 @@ auto make_live_histo_proc(
     // scan finishes. clear_every_scan clears the arrays, meaning fresh,
     // non-cumulative frames; the default policy leaves prior counts in place
     // for cumulative frames.
-    constexpr histogram_policy policy = Cumulative
-                                            ? histogram_policy::default_policy
-                                            : histogram_policy::clear_every_scan;
+    constexpr histogram_policy policy =
+        Cumulative ? histogram_policy::default_policy
+                   : histogram_policy::clear_every_scan;
     return scan_histograms<policy>(
         arg::num_elements{std::size_t(width * height)},
-        arg::num_bins{std::size_t(1)},
-        arg::max_per_bin<u16>{65535}, bsource,
+        arg::num_bins{std::size_t(1)}, arg::max_per_bin<u16>{65535}, bsource,
         select<type_list<histogram_array_event<>>>(
             count<histogram_array_event<>>(
                 ctx->tracker<count_accessor>("frame_counter"),
-                    CallFrameCallbackSink(acq, 0, num_frames))));
+                CallFrameCallbackSink(acq, 0, num_frames))));
 }
 
 template <bool Cumulative>
-auto make_processor(
-    TimeTagger_PrivateData *data,
-    OScDev_Acquisition *acq,
-    std::shared_ptr<tcspc::context> const &ctx
-) {
+auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
+                    std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
 
     // clang-format off
@@ -456,9 +448,9 @@ auto make_processor(
     // clang-format on
 };
 
-TagPipeline MakeProcessingPipeline(TimeTagger_PrivateData *data,
-                                   OScDev_Acquisition *acq,
-                                   std::shared_ptr<tcspc::context> const &ctx) {
+TagPipeline
+MakeProcessingPipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq,
+                       std::shared_ptr<tcspc::context> const &ctx) {
     if (data->cumulative)
         return TagPipeline(make_processor<true>(data, acq, ctx));
     return TagPipeline(make_processor<false>(data, acq, ctx));

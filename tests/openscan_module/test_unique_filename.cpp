@@ -15,8 +15,9 @@ class ScratchDir {
   public:
     ScratchDir()
         : path_(fs::temp_directory_path() /
-                 fs::path("openscan-swabian-test-" +
-                          std::to_string(reinterpret_cast<std::uintptr_t>(this)))) {
+                fs::path(
+                    "openscan-swabian-test-" +
+                    std::to_string(reinterpret_cast<std::uintptr_t>(this)))) {
         fs::remove_all(path_);
         fs::create_directories(path_);
     }
@@ -29,7 +30,8 @@ class ScratchDir {
         return (path_ / name).string();
     }
 
-    void Touch(std::string const &fullPathNoExt, std::string const &ext) const {
+    void Touch(std::string const &fullPathNoExt,
+               std::string const &ext) const {
         std::ofstream(fullPathNoExt + ext).put('x');
     }
 

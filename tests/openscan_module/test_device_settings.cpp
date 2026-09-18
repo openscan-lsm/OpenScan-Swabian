@@ -135,8 +135,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         size_t n = 0;
         CheckOk(OSc_Setting_GetInt32DiscreteValues(s, &values, &n),
                 "discrete values");
-        std::vector<int32_t> const expected = {16,  32,  64,   128, 256,
-                                                512, 1024, 2048, 4096};
+        std::vector<int32_t> const expected = {16,  32,   64,   128, 256,
+                                               512, 1024, 2048, 4096};
         std::vector<int32_t> const got(values, values + n);
         CHECK(got == expected);
     }

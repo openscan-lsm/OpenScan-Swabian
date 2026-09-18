@@ -29,7 +29,7 @@ TEST_CASE("getTimeTaggerModel resolves the fake serial and rejects others",
           "[connection]") {
     CHECK(getTimeTaggerModel(FAKE_SERIAL) == FAKE_MODEL);
     CHECK_THROWS_AS(getTimeTaggerModel("not-a-real-serial"),
-                     std::runtime_error);
+                    std::runtime_error);
 }
 
 TEST_CASE(
