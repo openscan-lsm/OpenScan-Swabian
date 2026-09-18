@@ -20,10 +20,11 @@ struct TimeTagger_PrivateData {
     int32_t syncDelay_ps = 0;
     int32_t lineDelay_ps = 0;
     int32_t maxPhotonPulseWidth_ps = 100'000;
-    int32_t maxDiffTime_ps = 15'000;
+    int32_t maxDiffTime_ps = 12'500;
 
     bool cumulative = false;
     int32_t histogramBins = 256;
+    int32_t histogramBinWidth_ps = 50;
 
     bool saveHistograms = false;
     bool saveRawData = false;

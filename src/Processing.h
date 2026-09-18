@@ -32,6 +32,7 @@ struct ProcessingParams {
 
     bool cumulative;
     std::int32_t histogramBins;
+    std::int32_t histogramBinWidth_ps;
 
     // Files are written only if the name is set.
     std::optional<std::string> histogramDumpFileName;

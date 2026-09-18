@@ -34,6 +34,7 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .maxDiffTime_ps = data->maxDiffTime_ps,
         .cumulative = data->cumulative,
         .histogramBins = data->histogramBins,
+        .histogramBinWidth_ps = data->histogramBinWidth_ps,
         .histogramDumpFileName = std::nullopt,
         .rawDataFileName = std::nullopt,
     };

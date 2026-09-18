@@ -128,12 +128,12 @@ falling edge) that this module expects each signal to be wired to:
   be treated as one pulse. Should comfortably exceed the detector's real
   pulse width, but stay short enough to avoid accidentally pairing across two
   separate pulses.
-- **Max Diff Time** (ps, default `15000`) — the maximum allowed time between
+- **Max Diff Time** (ps, default `12500`) — the maximum allowed time between
   a sync tick and a photon detection for them to be correlated as "this
-  photon resulted from this sync pulse." This is the parameter that actually
-  bounds the histogram's meaningful time range (see "Histogram binning"
-  below) — it should be set based on the laser's sync period and the
-  fluorophore's expected decay time, **not** based on the pixel dwell time.
+  photon resulted from this sync pulse." Only correlated photons are counted,
+  in both the live image and the histogram. It should be set based on the
+  laser's sync period (the default matches 80 MHz) and the fluorophore's
+  expected decay time, **not** based on the pixel dwell time.
   Those are unrelated: pixel dwell time is about how long the scanner stays
   at one spatial position, while Max Diff Time is about how long after a
   single laser pulse a photon can plausibly arrive and still belong to that
@@ -142,11 +142,19 @@ falling edge) that this module expects each signal to be wired to:
 
 ### Histogram binning
 
-- **Histogram Bins** (default `256`) — the per-pixel TCSPC histogram has this many bins, covering difftimes `[0, Max Diff Time)`.
+- **Histogram Bins** (default `256`) — the per-pixel TCSPC histogram has this
+  many bins, covering difftimes
+  `[0, Histogram Bin Width × Histogram Bins)`.
+- **Histogram Bin Width (ps)** (default `50`, range `1`–`100000`) — the width
+  of each histogram bin.
 
   > [!NOTE]
-  > The bin width of the TCSPC histogram is derived as `ceil(Max Diff Time / Histogram Bins)`, so
-  > the histogram's range fully covers **Max Diff Time** and avoids photon loss.
+  > Photons whose difftime is within **Max Diff Time** but at or beyond
+  > `Histogram Bin Width × Histogram Bins` are dropped from the saved
+  > histogram, yet still counted in the live image. Conversely, if
+  > `Histogram Bin Width × Histogram Bins` exceeds **Max Diff Time**, the
+  > trailing bins stay empty. With the defaults (50 × 256 = 12800 ps ≥
+  > 12500 ps) nothing is dropped.
 - **Cumulative** (default `false`) — if enabled, the per-pixel histogram
   accumulates across the whole acquisition instead of resetting every frame.
 - **Save Histograms** (default `false`) — when enabled, the full per-pixel

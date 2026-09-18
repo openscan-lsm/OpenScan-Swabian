@@ -232,18 +232,11 @@ auto make_processor(ProcessingParams const &params,
 
     // clang-format off
 
-    // pair_all_between guarantees every correlated photon's difftime is
-    // less than maxDiffTime_ps, so the histogram's covered range
-    // (bin_width * num_bins) must be at least maxDiffTime_ps for none of them
-    // to be silently dropped by the bin mapper. Ceiling division instead
-    // always rounds bin_width UP, so bin_width * num_bins >= maxDiffTime_ps
-    // always holds; the only cost is the covered range overshooting
-    // maxDiffTime_ps by at most num_bins - 1 ps (one bin's worth of rounding
-    // error spread across the whole histogram), which is a far cheaper
-    // trade than losing real data.
+    // Photons with difftime >= bin_width * num_bins (possible when that is
+    // less than maxDiffTime_ps) are dropped by the full histogram's bin
+    // mapper (no clamp), but are still counted in the live image.
     std::int32_t const num_bins = params.histogramBins;
-    difftime_type const bin_width =
-        (params.maxDiffTime_ps + num_bins - 1) / num_bins;
+    difftime_type const bin_width = params.histogramBinWidth_ps;
 
     using tc_event_list = type_list<
         time_correlated_detection_event<>,
@@ -287,9 +280,9 @@ auto make_processor(ProcessingParams const &params,
             return type_erased_processor<tc_event_list>(
                 std::move(live_pixel_chain));
 
-        // Full per-pixel TCSPC histogram (derived bin_width, real
-        // histogramBins) -- debug-dumped to disk, not sent to the frame
-        // callback.
+        // Full per-pixel TCSPC histogram (histogramBins bins of
+        // histogramBinWidth_ps) -- debug-dumped to disk, not sent to the
+        // frame callback.
         auto full_pixel_chain =
         map_to_datapoints<time_correlated_detection_event<>>(
             difftime_data_mapper(),
