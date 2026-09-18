@@ -1,8 +1,6 @@
 #include "Processing.h"
 
-#include <fstream>
 #include <span>
-#include <string>
 #include <utility>
 
 namespace {
@@ -78,60 +76,23 @@ class FrameSink {
     }
 };
 
-// DEBUG: terminal sink for the full per-pixel histogram (histogramBins
-// bins/pixel) -- writes it to the given file for offline inspection
-// instead of sending it to the frame callback (which has no way to receive
-// a per-pixel histogram cube -- see FrameSink's comment above). No
-// frame-count stop logic here; the live/intensity branch (FrameSink) owns
-// that. Remove, or replace with real FLIM file output, once no longer
-// needed.
-class HistogramDumpSink {
-    std::string filename_;
-
-  public:
-    explicit HistogramDumpSink(std::string filename)
-        : filename_(std::move(filename)) {}
-
-    void handle(tcspc::histogram_array_event<> const &event) {
-        dump_bucket(event.data_bucket);
-    }
-    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
-    // concluding_histogram_array_event instead of histogram_array_event
-    // (a distinct, unrelated type, despite carrying the same data_bucket
-    // shape) -- this sink needs to be a valid handler for both, since
-    // make_full_histo_proc<true> selects only the former as this sink's
-    // input.
-    void handle(tcspc::concluding_histogram_array_event<> const &event) {
-        dump_bucket(event.data_bucket);
-    }
-    void flush() {}
-
-    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "HistogramDumpSink");
-    }
-
-    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
-        return tcspc::processor_graph().push_entry_point(this);
-    }
-
-  private:
-    template <typename Bucket> void dump_bucket(Bucket const &data_bucket) {
-        std::ofstream debug_file(filename_,
-                                 std::ios::binary | std::ios::trunc);
-        debug_file.write(reinterpret_cast<char const *>(data_bucket.data()),
-                         static_cast<std::streamsize>(data_bucket.size() *
-                                                      sizeof(tcspc::u16)));
-    }
-};
-
-// Full per-pixel histogram (histogramBins bins/pixel) -- debug-dumped to
-// disk, not sent to the frame callback. See HistogramDumpSink's comment.
+// Full per-pixel histogram (histogramBins bins/pixel) -- written to disk as
+// raw u16, not sent to the frame callback (which has no way to receive a
+// per-pixel histogram cube -- see FrameSink's comment above). The array shape
+// is (frames, height, width, bins), or (height, width, bins) if cumulative.
 template <bool Cumulative>
 auto make_full_histo_proc(ProcessingParams const &params,
                           std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
     auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
+    auto writer = write_binary_stream(
+        binary_file_output_stream(*params.histogramDumpFileName,
+                                  arg::truncate{true}),
+        recycling_bucket_source<std::byte>::create(),
+        // Not flushed if the acquisition is halted, so use a granularity that
+        // never leaves part of a frame buffered.
+        arg::granularity<>{sizeof(u16)});
     struct reset_event {};
     if constexpr (Cumulative) {
         return append(
@@ -144,7 +105,8 @@ auto make_full_histo_proc(ProcessingParams const &params,
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
                     select<type_list<concluding_histogram_array_event<>>>(
-                        HistogramDumpSink(*params.histogramDumpFileName)))));
+                        extract_bucket<concluding_histogram_array_event<>>(
+                            view_as_bytes(std::move(writer)))))));
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
             arg::num_elements{num_pixels},
@@ -153,7 +115,8 @@ auto make_full_histo_proc(ProcessingParams const &params,
             select<type_list<histogram_array_event<>>>(
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
-                    HistogramDumpSink(*params.histogramDumpFileName))));
+                    extract_bucket<histogram_array_event<>>(
+                        view_as_bytes(std::move(writer))))));
     }
 }
 
@@ -222,8 +185,8 @@ auto make_processor(ProcessingParams const &params,
         ctx->tracker<count_accessor>("live_pixel_counter"),
     make_live_histo_proc<Cumulative>(params, std::move(frameCallback), ctx)))));
 
-    // The full per-pixel histogram (histogramBins bins/pixel, debug-dumped
-    // to disk by HistogramDumpSink) is only useful when a dump file name
+    // The full per-pixel histogram (histogramBins bins/pixel, written to
+    // disk) is only useful when a dump file name
     // was given. Broadcasting every time-correlated event
     // to it as well as to live_pixel_chain roughly doubles consumer-side
     // per-event work (map_to_datapoints -> map_to_bins ->
