@@ -268,7 +268,7 @@ auto make_processor(ProcessingParams const &params,
     std::move(start_stop_merge))))));
 
     using tag_bucket = bucket<swabian_tag_event>;
-    using bucket_event_list = type_list<tag_bucket>;
+    using buffered_event_list = type_list<tag_bucket, time_reached_event<>>;
 
     auto unbatched_chain =
     unbatch<tag_bucket>(
@@ -295,14 +295,17 @@ auto make_processor(ProcessingParams const &params,
 
     // Save the tags exactly as processed (if a file name was given): 16-byte
     // records in the vendor SDK's Dump format.
-    type_erased_processor<bucket_event_list> bucket_downstream =
-        [&]() -> type_erased_processor<bucket_event_list> {
+    type_erased_processor<buffered_event_list> bucket_downstream =
+        [&]() -> type_erased_processor<buffered_event_list> {
         if (!params.rawDataFileName)
-            return type_erased_processor<bucket_event_list>(
+            return type_erased_processor<buffered_event_list>(
                 std::move(unbatched_chain));
 
-        return type_erased_processor<bucket_event_list>(
-            broadcast<bucket_event_list>(
+        return type_erased_processor<buffered_event_list>(
+            broadcast<buffered_event_list>(
+                // Only the tags go to the raw file (view_as_bytes would
+                // otherwise serialize the time_reached_event too).
+                select<type_list<tag_bucket>>(
                 view_as_bytes(
                 write_binary_stream(
                     binary_file_output_stream(*params.rawDataFileName,
@@ -310,19 +313,22 @@ auto make_processor(ProcessingParams const &params,
                     recycling_bucket_source<std::byte>::create(),
                     // Not flushed if the acquisition is halted, so use a
                     // granularity that never leaves bytes buffered.
-                    arg::granularity<>{sizeof(swabian_tag_event)})),
+                    arg::granularity<>{sizeof(swabian_tag_event)}))),
                 std::move(unbatched_chain)));
     }();
 
-    // Each SDK-delivered batch of tags becomes one bucket.
+    // Each SDK-delivered batch of tags becomes one bucket, followed by a
+    // time_reached_event; both cross the thread boundary through the buffer.
     return
     copy_to_buckets<TagSpan, swabian_tag_event>(
         recycling_bucket_source<swabian_tag_event>::create(),
-    real_time_buffer<tag_bucket>(
+    multiplex<buffered_event_list>(
+    real_time_buffer<variant_event<buffered_event_list>>(
         arg::threshold<std::size_t>{2},
         std::chrono::milliseconds{100},
         ctx->tracker<buffer_accessor>(kTagBufferTrackerName),
-        std::move(bucket_downstream)));
+    demultiplex(
+        std::move(bucket_downstream)))));
     // clang-format on
 };
 

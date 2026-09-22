@@ -1,6 +1,7 @@
 // Tests for TagStreamMeasurement against the fake SDK's IteratorBase: that
-// it delivers what the fake generates for the registered channels, and that
-// a push function returning false ends delivery.
+// it delivers what the fake generates for the registered channels, along
+// with each block's end_time, and that a push function returning false ends
+// delivery.
 
 #include "TagStreamMeasurement.h"
 
@@ -16,14 +17,36 @@
 
 namespace {
 
+struct Block {
+    std::vector<Tag> tags;
+    timestamp_t endTime;
+};
+
 struct TagCollector {
     std::mutex mutex;
     std::vector<Tag> tags;
+    std::vector<Block> blocks;
     int pushCalls = 0;
+
+    TagStreamMeasurement::PushFunction Pusher(bool result = true) {
+        return [this, result](std::vector<Tag> const &batch,
+                              timestamp_t endTime) {
+            std::lock_guard<std::mutex> lock(mutex);
+            tags.insert(tags.end(), batch.begin(), batch.end());
+            blocks.push_back({batch, endTime});
+            ++pushCalls;
+            return result;
+        };
+    }
 
     [[nodiscard]] std::vector<Tag> Snapshot() {
         std::lock_guard<std::mutex> lock(mutex);
         return tags;
+    }
+
+    [[nodiscard]] std::vector<Block> Blocks() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return blocks;
     }
 
     [[nodiscard]] int PushCalls() {
@@ -38,14 +61,8 @@ TEST_CASE("TagStreamMeasurement delivers batches while running",
           "[lifecycle]") {
     TimeTaggerBase tagger;
     TagCollector collector;
-    TagStreamMeasurement measurement(
-        &tagger, {LINE_CLOCK_CHANNEL}, [&](std::vector<Tag> const &batch) {
-            std::lock_guard<std::mutex> lock(collector.mutex);
-            collector.tags.insert(collector.tags.end(), batch.begin(),
-                                  batch.end());
-            ++collector.pushCalls;
-            return true;
-        });
+    TagStreamMeasurement measurement(&tagger, {LINE_CLOCK_CHANNEL},
+                                     collector.Pusher());
 
     CHECK(measurement.isRunning());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -57,16 +74,32 @@ TEST_CASE("TagStreamMeasurement delivers batches while running",
     }));
 }
 
+TEST_CASE("TagStreamMeasurement delivers non-decreasing end times beyond "
+          "every tag in the block",
+          "[lifecycle]") {
+    TimeTaggerBase tagger;
+    TagCollector collector;
+    TagStreamMeasurement measurement(&tagger, {LINE_CLOCK_CHANNEL},
+                                     collector.Pusher());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    auto const blocks = collector.Blocks();
+    REQUIRE(blocks.size() > 1);
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (i > 0)
+            CHECK(blocks[i].endTime >= blocks[i - 1].endTime);
+        for (auto const &tag : blocks[i].tags)
+            CHECK(tag.time < blocks[i].endTime);
+    }
+}
+
 TEST_CASE("TagStreamMeasurement stops delivery when push returns false",
           "[lifecycle]") {
     TimeTaggerBase tagger;
     TagCollector collector;
-    TagStreamMeasurement measurement(
-        &tagger, {LINE_CLOCK_CHANNEL}, [&](std::vector<Tag> const &) {
-            std::lock_guard<std::mutex> lock(collector.mutex);
-            ++collector.pushCalls;
-            return false;
-        });
+    TagStreamMeasurement measurement(&tagger, {LINE_CLOCK_CHANNEL},
+                                     collector.Pusher(false));
 
     CHECK(measurement.waitUntilFinished(1000));
     CHECK_FALSE(measurement.isRunning());
@@ -81,7 +114,7 @@ TEST_CASE("TagStreamMeasurement destructor stops delivery", "[lifecycle]") {
     {
         TagStreamMeasurement measurement(
             &tagger, {LINE_CLOCK_CHANNEL},
-            [](std::vector<Tag> const &) { return true; });
+            [](std::vector<Tag> const &, timestamp_t) { return true; });
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     SUCCEED("destructor returned");
@@ -91,13 +124,8 @@ TEST_CASE("TagStreamMeasurement registers exactly the given channels",
           "[lifecycle]") {
     TimeTaggerBase tagger;
     TagCollector collector;
-    TagStreamMeasurement measurement(
-        &tagger, {LINE_CLOCK_CHANNEL}, [&](std::vector<Tag> const &batch) {
-            std::lock_guard<std::mutex> lock(collector.mutex);
-            collector.tags.insert(collector.tags.end(), batch.begin(),
-                                  batch.end());
-            return true;
-        });
+    TagStreamMeasurement measurement(&tagger, {LINE_CLOCK_CHANNEL},
+                                     collector.Pusher());
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 

@@ -17,6 +17,7 @@
 #include <TimeTagger.h>
 
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -24,6 +25,40 @@
 namespace {
 constexpr timestamp_t kLinePeriodPs =
     SIMULATED_LINE_WIDTH_PIXELS * SIMULATED_PIXEL_PERIOD_PS;
+
+struct Batch {
+    std::vector<Tag> tags;
+    timestamp_t beginTime;
+    timestamp_t endTime;
+};
+
+// Like CollectingIterator, but keeps each batch separate along with its
+// begin/end times.
+class BatchCollectingIterator : public IteratorBase {
+  public:
+    explicit BatchCollectingIterator(TimeTaggerBase *tagger)
+        : IteratorBase(tagger) {}
+    ~BatchCollectingIterator() override { stop(); }
+
+    using IteratorBase::registerChannel;
+
+    [[nodiscard]] std::vector<Batch> Snapshot() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return batches_;
+    }
+
+  protected:
+    bool next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin_time,
+                   timestamp_t end_time) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        batches_.push_back({incoming_tags, begin_time, end_time});
+        return false;
+    }
+
+  private:
+    mutable std::mutex mutex_;
+    std::vector<Batch> batches_;
+};
 
 std::vector<Tag> Collect(std::vector<channel_t> const &channels,
                          std::chrono::milliseconds duration) {
@@ -157,6 +192,33 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
         CHECK(t.time > *last_sync_time); // causality
         CHECK(t.time - *last_sync_time <
               SIMULATED_PIXEL_PERIOD_PS); // not absurdly late
+    }
+}
+
+TEST_CASE("Batches are contiguous and every tag satisfies begin_time <= "
+          "time < end_time",
+          "[data]") {
+    TimeTaggerBase tagger;
+    BatchCollectingIterator iter(&tagger);
+    for (channel_t const ch :
+         {LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL, SYNC_CHANNEL, -SYNC_CHANNEL,
+          PHOTON_CHANNEL, -PHOTON_CHANNEL})
+        iter.registerChannel(ch);
+    iter.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    iter.stop();
+    auto const batches = iter.Snapshot();
+    REQUIRE(batches.size() > 1);
+
+    for (size_t i = 0; i < batches.size(); ++i) {
+        auto const &b = batches[i];
+        CHECK(b.beginTime <= b.endTime);
+        if (i > 0)
+            CHECK(b.beginTime == batches[i - 1].endTime);
+        for (auto const &t : b.tags) {
+            CHECK(t.time >= b.beginTime);
+            CHECK(t.time < b.endTime);
+        }
     }
 }
 

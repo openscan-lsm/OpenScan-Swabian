@@ -451,6 +451,10 @@ class IteratorBase {
         std::mt19937_64 rng{std::random_device{}()};
         std::map<channel_t, double> nextArrivalPs;
         std::optional<double> nextPhotonCandidatePs;
+        // Trailing edge of a photon pulse whose rising edge was delivered in
+        // an earlier batch but which itself fell at or beyond that batch's
+        // endTime (every tag must satisfy tag.time < end_time).
+        std::optional<double> pendingPhotonTrailingPs;
 
         while (running_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -510,6 +514,15 @@ class IteratorBase {
                 };
                 if (!nextPhotonCandidatePs)
                     nextPhotonCandidatePs = drawPositivePs();
+                if (pendingPhotonTrailingPs &&
+                    static_cast<timestamp_t>(*pendingPhotonTrailingPs) <
+                        endTime) {
+                    if (photonNegRegistered)
+                        batch.emplace_back(
+                            static_cast<timestamp_t>(*pendingPhotonTrailingPs),
+                            -PHOTON_CHANNEL);
+                    pendingPhotonTrailingPs.reset();
+                }
                 for (;;) {
                     // A stop request (running_ flipped false by the
                     // consumer thread reaching its frame count, or by
@@ -522,7 +535,11 @@ class IteratorBase {
                     if (!running_)
                         break;
                     double &t = *nextPhotonCandidatePs;
-                    if (t >= generateUntilPs)
+                    // Compare truncated times so that no tag equals endTime
+                    // (the SDK contract is begin_time <= tag.time <
+                    // end_time). Also stops generation while a trailing edge
+                    // is still pending, since t is beyond it.
+                    if (static_cast<timestamp_t>(t) >= endTime)
                         break;
                     auto const periodIndex = static_cast<std::int64_t>(
                         t / static_cast<double>(SIMULATED_PIXEL_PERIOD_PS));
@@ -535,11 +552,17 @@ class IteratorBase {
                         if (photonPosRegistered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
                                                PHOTON_CHANNEL);
-                        if (photonNegRegistered)
-                            batch.emplace_back(
-                                static_cast<timestamp_t>(
-                                    t + SIMULATED_PHOTON_PULSE_WIDTH_PS),
-                                -PHOTON_CHANNEL);
+                        double const trailingPs =
+                            t + static_cast<double>(
+                                    SIMULATED_PHOTON_PULSE_WIDTH_PS);
+                        if (static_cast<timestamp_t>(trailingPs) < endTime) {
+                            if (photonNegRegistered)
+                                batch.emplace_back(
+                                    static_cast<timestamp_t>(trailingPs),
+                                    -PHOTON_CHANNEL);
+                        } else {
+                            pendingPhotonTrailingPs = trailingPs;
+                        }
                         // Schedule the next candidate from this pulse's
                         // FALLING edge, not its rising edge -- otherwise a
                         // short draw can land the next rising edge before
@@ -632,7 +655,10 @@ class IteratorBase {
                             .emplace(channel, static_cast<double>(phaseOffset))
                             .first;
                 }
-                while (running_ && it->second < generateUntilPs) {
+                // Compare truncated times so that no tag equals endTime (see
+                // the same check in the gated-photon loop above).
+                while (running_ &&
+                       static_cast<timestamp_t>(it->second) < endTime) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
                                        channel);
                     it->second += static_cast<double>(period);

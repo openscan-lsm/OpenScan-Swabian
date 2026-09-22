@@ -8,18 +8,28 @@
 static_assert(sizeof(Tag) == sizeof(tcspc::swabian_tag_event));
 static_assert(std::is_trivially_copyable_v<Tag>);
 
+using abstime_type = tcspc::default_numeric_traits::abstime_type;
+static_assert(sizeof(timestamp_t) == sizeof(abstime_type));
+static_assert(std::is_signed_v<timestamp_t> && std::is_signed_v<abstime_type>);
+
 TagStreamProcessor::TagStreamProcessor(Pipeline pipeline)
     : pipeline_(std::move(pipeline)) {}
 
-bool TagStreamProcessor::push(std::vector<Tag> const &tags) {
+bool TagStreamProcessor::push(std::vector<Tag> const &tags,
+                              timestamp_t end_time) {
     if (state_ != State::Open)
         return false;
-    if (tags.empty())
-        return true;
     try {
-        pipeline_.handle(TagSpan(
-            reinterpret_cast<tcspc::swabian_tag_event const *>(tags.data()),
-            tags.size()));
+        if (!tags.empty())
+            pipeline_.handle(
+                TagSpan(reinterpret_cast<tcspc::swabian_tag_event const *>(
+                            tags.data()),
+                        tags.size()));
+        // end_time is the begin time of the next block (exclusive), so the
+        // last time known to be complete is end_time - 1. Using end_time
+        // itself would put the time-reached event ahead of any detection
+        // with that same timestamp in the next block.
+        pipeline_.handle(tcspc::time_reached_event<>{end_time - 1});
     } catch (tcspc::end_of_processing const &e) {
         // Documented libtcspc protocol (see errors.hpp): a processor
         // signals a clean, non-error completion by flushing its own
