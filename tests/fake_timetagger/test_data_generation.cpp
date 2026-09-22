@@ -60,9 +60,11 @@ class BatchCollectingIterator : public IteratorBase {
     std::vector<Batch> batches_;
 };
 
-std::vector<Tag> Collect(std::vector<channel_t> const &channels,
+// Takes the tagger so callers can configure it (e.g. the conditional filter)
+// before generation starts.
+std::vector<Tag> Collect(TimeTaggerBase &tagger,
+                         std::vector<channel_t> const &channels,
                          std::chrono::milliseconds duration) {
-    TimeTaggerBase tagger;
     CollectingIterator iter(&tagger);
     for (channel_t const ch : channels)
         iter.registerChannel(ch);
@@ -70,6 +72,29 @@ std::vector<Tag> Collect(std::vector<channel_t> const &channels,
     std::this_thread::sleep_for(duration);
     iter.stop();
     return iter.Snapshot();
+}
+
+std::vector<Tag> Collect(std::vector<channel_t> const &channels,
+                         std::chrono::milliseconds duration) {
+    TimeTaggerBase tagger;
+    return Collect(tagger, channels, duration);
+}
+
+// True if two SYNC_CHANNEL tags occur with no photon tag (either edge)
+// between them.
+bool HasConsecutiveSyncs(std::vector<Tag> const &tags) {
+    bool syncPending = false;
+    for (auto const &t : tags) {
+        if (t.channel == SYNC_CHANNEL) {
+            if (syncPending)
+                return true;
+            syncPending = true;
+        } else if (t.channel == PHOTON_CHANNEL ||
+                   t.channel == -PHOTON_CHANNEL) {
+            syncPending = false;
+        }
+    }
+    return false;
 }
 } // namespace
 
@@ -193,6 +218,39 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
         CHECK(t.time - *last_sync_time <
               SIMULATED_PIXEL_PERIOD_PS); // not absurdly late
     }
+}
+
+TEST_CASE("The conditional filter passes only the first sync after each "
+          "photon edge",
+          "[data][filter]") {
+    std::vector<channel_t> const channels = {SYNC_CHANNEL, PHOTON_CHANNEL,
+                                             -PHOTON_CHANNEL};
+
+    // Control: the mean of one photon per sync period leaves a period empty
+    // with probability ~e^-1, so consecutive syncs are common.
+    auto const unfiltered = Collect(channels, std::chrono::milliseconds(50));
+    REQUIRE(unfiltered.size() > 100);
+    CHECK(HasConsecutiveSyncs(unfiltered));
+
+    TimeTaggerBase tagger;
+    tagger.setConditionalFilter({PHOTON_CHANNEL, -PHOTON_CHANNEL},
+                                {SYNC_CHANNEL});
+    auto const filtered =
+        Collect(tagger, channels, std::chrono::milliseconds(50));
+    REQUIRE(filtered.size() > 100);
+    CHECK_FALSE(HasConsecutiveSyncs(filtered));
+
+    bool sawSync = false;
+    for (size_t i = 0; i < filtered.size(); ++i) {
+        if (filtered[i].channel != SYNC_CHANNEL)
+            continue;
+        sawSync = true;
+        REQUIRE(i > 0);
+        CHECK((filtered[i - 1].channel == PHOTON_CHANNEL ||
+               filtered[i - 1].channel == -PHOTON_CHANNEL));
+        CHECK(filtered[i].time >= filtered[i - 1].time);
+    }
+    CHECK(sawSync);
 }
 
 TEST_CASE("Batches are contiguous and every tag satisfies begin_time <= "

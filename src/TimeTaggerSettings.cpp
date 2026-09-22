@@ -2,8 +2,11 @@
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
 
+#include <algorithm>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <vector>
 
 static TimeTagger_PrivateData *GetSettingDeviceData(OScDev_Setting *setting) {
     return static_cast<TimeTagger_PrivateData *>(OScDev_Device_GetImplData(
@@ -22,22 +25,29 @@ template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
     static OScDev_Error
     GetNumericConstraintType(OScDev_Setting *,
                              OScDev_ValueConstraint *constraintType) {
-        *constraintType = OScDev_ValueConstraint_Range;
+        *constraintType = OScDev_ValueConstraint_DiscreteValues;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
-                                 int32_t *max) {
-        *min = 1;
-        *max = 8; // TODO: Get the actual number of channels from the device
+    static OScDev_Error GetDiscreteValues(OScDev_Setting *,
+                                          OScDev_NumArray **values) {
+        // Positive = rising edge, negative = falling edge, as in the SDK.
+        // TODO: Get the actual number of channels from the device
+        constexpr int32_t numChannels = 8;
+        *values = OScDev_NumArray_Create();
+        for (int32_t ch = -numChannels; ch <= numChannels; ++ch) {
+            if (ch != 0)
+                OScDev_NumArray_Append(*values, ch);
+        }
         return OScDev_OK;
     }
 
   public:
-    static inline OScDev_SettingImpl impl = {.GetNumericConstraintType =
-                                                 GetNumericConstraintType,
-                                             .GetInt32 = Get,
-                                             .SetInt32 = Set,
-                                             .GetInt32Range = GetRange};
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32DiscreteValues = GetDiscreteValues,
+    };
 };
 
 class SyncDelaySetting {
@@ -77,6 +87,58 @@ class LineDelaySetting {
         // Line delay should be non-negative integers
         *min = 0;
         *max = std::numeric_limits<int32_t>::max();
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32Range = GetRange,
+    };
+};
+
+class PhotonDelaySetting {
+    static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
+        *value = GetSettingDeviceData(setting)->photonDelay_ps;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
+        GetSettingDeviceData(setting)->photonDelay_ps = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *setting, int32_t *min,
+                                 int32_t *max) {
+        auto *data = GetSettingDeviceData(setting);
+        if (!data->tagger) {
+            *min = std::numeric_limits<int32_t>::min();
+            *max = std::numeric_limits<int32_t>::max();
+            return OScDev_OK;
+        }
+        std::vector<timestamp_t> range;
+        try {
+            range = data->tagger->getDelayHardwareRange(data->photonChannel);
+        } catch (std::exception const &e) {
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
+        }
+        if (range.size() != 2) {
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(
+                "Unexpected hardware delay range from Time Tagger"));
+        }
+        auto const clamp = [](timestamp_t v) {
+            return static_cast<int32_t>(
+                std::clamp<timestamp_t>(v, std::numeric_limits<int32_t>::min(),
+                                        std::numeric_limits<int32_t>::max()));
+        };
+        *min = clamp(range[0]);
+        *max = clamp(range[1]);
         return OScDev_OK;
     }
 
@@ -338,6 +400,14 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     err = OScDev_Error_AsRichError(
         OScDev_Setting_Create(&s, "Line Delay (ps)", OScDev_ValueType_Int32,
                               &LineDelaySetting::impl, device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(
+        OScDev_Setting_Create(&s, "Photon Delay (ps)", OScDev_ValueType_Int32,
+                              &PhotonDelaySetting::impl, device));
     if (err) {
         goto error;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AcquisitionRun.h"
+#include "TaggerConfig.h"
 
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
@@ -19,6 +20,10 @@ struct TimeTagger_PrivateData {
 
     int32_t syncDelay_ps = 0;
     int32_t lineDelay_ps = 0;
+    int32_t photonDelay_ps = 0;
+    // Whether a hardware delay has been written to the currently open device;
+    // see ConfigureTagger.
+    bool hardwareDelaysApplied = false;
     int32_t maxPhotonPulseWidth_ps = 100'000;
     int32_t maxDiffTime_ps = 12'500;
 
@@ -34,6 +39,17 @@ struct TimeTagger_PrivateData {
 inline TimeTagger_PrivateData *GetData(OScDev_Device *device) {
     return static_cast<TimeTagger_PrivateData *>(
         OScDev_Device_GetImplData(device));
+}
+
+// Requires an open device (data->tagger).
+inline TaggerChannels MakeTaggerChannels(TimeTagger_PrivateData *data) {
+    return {
+        .sync = data->syncChannel,
+        .photonLeading = data->photonChannel,
+        .photonTrailing =
+            data->tagger->getInvertedChannel(data->photonChannel),
+        .lineClock = data->lineClockChannel,
+    };
 }
 
 OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,

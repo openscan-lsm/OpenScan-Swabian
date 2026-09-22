@@ -17,17 +17,17 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
     double const pixelRate = OScDev_Acquisition_GetPixelRate(acq);
+    TaggerChannels const channels = MakeTaggerChannels(data);
 
     ProcessingParams params{
         .width = width,
         .height = height,
         .pixelTime_ps = std::llround(1e12 / pixelRate),
         .numFrames = OScDev_Acquisition_GetNumberOfFrames(acq),
-        .lineClockChannel = data->lineClockChannel,
-        .syncChannel = data->syncChannel,
-        .photonLeadingChannel = data->photonChannel,
-        .photonTrailingChannel =
-            data->tagger->getInvertedChannel(data->photonChannel),
+        .lineClockChannel = channels.lineClock,
+        .syncChannel = channels.sync,
+        .photonLeadingChannel = channels.photonLeading,
+        .photonTrailingChannel = channels.photonTrailing,
         .syncDelay_ps = data->syncDelay_ps,
         .lineDelay_ps = data->lineDelay_ps,
         .maxPhotonPulseWidth_ps = data->maxPhotonPulseWidth_ps,
@@ -67,13 +67,17 @@ FrameCallback MakeFrameCallback(OScDev_Acquisition *acq) {
 }
 
 std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
-    std::vector<channel_t> channels;
-    for (auto const channel :
-         {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
-        channels.push_back(channel);
-        channels.push_back(data->tagger->getInvertedChannel(channel));
-    }
-    return channels;
+    // The sync channel's inverted edge is not used by the pipeline, and the
+    // Time Tagger transmits every registered channel, so at laser sync rates
+    // it would cost as much bandwidth as the sync channel itself.
+    TaggerChannels const channels = MakeTaggerChannels(data);
+    return {
+        channels.sync,
+        channels.photonLeading,
+        channels.photonTrailing,
+        channels.lineClock,
+        data->tagger->getInvertedChannel(channels.lineClock),
+    };
 }
 
 } // namespace

@@ -122,6 +122,7 @@ static OScDev_Error TimeTagger_Open(OScDev_Device *device) {
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
+    data->hardwareDelaysApplied = false;
     return OScDev_OK;
 }
 
@@ -193,7 +194,10 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
     GetData(device)->run.reset();
 
     try {
-        GetData(device)->run = std::make_unique<AcquisitionRun>(device, acq);
+        TimeTagger_PrivateData *data = GetData(device);
+        ConfigureTagger(data->tagger.get(), MakeTaggerChannels(data),
+                        data->photonDelay_ps, data->hardwareDelaysApplied);
+        data->run = std::make_unique<AcquisitionRun>(device, acq);
     } catch (const std::exception &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }

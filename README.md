@@ -104,25 +104,65 @@ These are exposed as standard MicroManager device properties (device
 
 ### Channels
 
-The Time Tagger's raw channel numbers (positive = rising edge, negative =
-falling edge) that this module expects each signal to be wired to:
+The Time Tagger's raw channel numbers that this module expects each signal
+to be wired to. A positive number selects the input's rising edge and the
+corresponding negative number its falling edge, so e.g. `-3` uses the
+falling edge of input 3.
 
 - **Sync Channel** (default `2`) — the laser sync / reference clock input.
+  Only the configured edge is used and recorded; the input's other edge is
+  never registered with the Time Tagger.
 - **Photon Channel** (default `3`) — the detector (e.g. PMT) pulse input.
-  Both edges of this channel are used: the module measures pulse width by
-  pairing each rising detection with its matching falling detection.
+  Both edges of this input are used: the configured edge is the pulse's
+  leading edge and the opposite edge its trailing edge. The module pairs each
+  leading edge with its matching trailing edge and correlates the pulse's
+  midpoint against the sync.
 - **Line Clock Channel** (default `1`) — a per-scan-line marker from the
-  scanner. Used to derive per-pixel timing windows: each line-clock tick
-  starts a run of `width` pixel windows, each `1e12 / pixelRate` picoseconds
-  wide, where `width` and `pixelRate` come from the current OpenScan
-  acquisition (ROI width, pixel rate), not from a setting here.
+  scanner; the configured edge marks the start of a line. Used to derive
+  per-pixel timing windows: each line-clock tick starts a run of `width`
+  pixel windows, each `1e12 / pixelRate` picoseconds wide, where `width` and
+  `pixelRate` come from the current OpenScan acquisition (ROI width, pixel
+  rate), not from a setting here.
+
+#### Conditional filter
+
+At a typical laser sync rate (e.g. 80 MHz) the sync channel alone would
+saturate the Time Tagger's USB bandwidth. For every acquisition the module
+therefore enables the Time Tagger's on-board
+[conditional filter](https://www.swabianinstruments.com/static/documentation/TimeTagger/sections/tutorials/conditionalFilter.html)
+with both photon edges as the *trigger* channels and the sync channel as the
+*filtered* channel: the device transmits only the first sync edge following
+each photon edge, so the sync is transmitted once per photon (twice, when a
+sync falls between a photon pulse's two edges) regardless of the laser rate.
+Both photon edges must trigger because the pipeline correlates the pulse
+midpoint, which the hardware cannot see. The consequences for **Sync Delay
+(ps)** and **Max Diff Time (ps)** are described below.
 
 ### Timing
 
-- **Sync Delay (ps)** (default `0`) — a fixed offset applied to sync
-  detections before correlating them with photons (`delay()` ahead of the
-  sync/photon pairing stage). Compensates for a known, fixed timing offset
-  between the sync and photon paths (e.g. cable length differences).
+- **Sync Delay (ps)** (default `0`) — a fixed offset applied in software to
+  sync detections before correlating them with photons (`delay()` ahead of
+  the sync/photon pairing stage). Because the conditional filter passes the
+  sync edge *following* each photon, this should be set to minus the laser
+  sync period (e.g. `-12500` for 80 MHz), which moves that sync back to
+  (approximately) where the preceding sync was, so that the difftime is the
+  usual "time since the previous laser pulse". This is a software-side shift:
+  it relabels the difftime axis but cannot change *which* sync edge the
+  hardware filter passes; for that, see **Photon Delay (ps)**.
+- **Photon Delay (ps)** (default `0`) — a hardware delay applied on the Time
+  Tagger to both edges of the photon channel. The allowed range is queried
+  from the device (±2.5 µs on a Time Tagger X, ±2.0 µs on a Time Tagger
+  Ultra); the Time Tagger 20 has no hardware delay, and there this setting
+  must stay `0` (it is then never written to the device). The delay is
+  applied on board, before the conditional filter, so it shifts which sync
+  edge the filter passes for each photon and therefore where within the sync
+  period the fluorescence decay lands. Tune it so that the decay does not
+  straddle a sync edge: a decay whose start coincides with a sync edge would
+  otherwise be split between the beginning and the end of the difftime
+  window. Sync Delay (ps) cannot do this, because it is applied in software
+  after the filter has already chosen the sync edge. Fixed offsets between
+  the sync and photon paths (e.g. cable length) are also compensated here.
+  The sync and line clock channels always get a hardware delay of `0`.
 - **Max Photon Pulse Width (ps)** (default `100000`) — the maximum allowed
   separation between a photon channel's rising and falling edges for them to
   be treated as one pulse. Should comfortably exceed the detector's real
@@ -139,6 +179,12 @@ falling edge) that this module expects each signal to be wired to:
   single laser pulse a photon can plausibly arrive and still belong to that
   pulse. In a typical setup many sync pulses occur within one pixel's dwell
   time, each independently contributing photons to that pixel's histogram.
+
+  It must not exceed the laser sync period. When a sync falls between a
+  photon pulse's two edges, the conditional filter passes two sync edges for
+  that photon; after the Sync Delay (ps) shift they sit one period apart, and
+  only the one within Max Diff Time (ps) pairs with the photon. A larger value
+  would count such photons twice.
 
 ### Histogram binning
 
