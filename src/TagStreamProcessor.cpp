@@ -1,8 +1,12 @@
 #include "TagStreamProcessor.h"
 
-#include <bit>
 #include <exception>
+#include <type_traits>
 #include <utility>
+
+// swabian_tag_event is a byte-array view with the same layout as Tag.
+static_assert(sizeof(Tag) == sizeof(tcspc::swabian_tag_event));
+static_assert(std::is_trivially_copyable_v<Tag>);
 
 TagStreamProcessor::TagStreamProcessor(Pipeline pipeline)
     : pipeline_(std::move(pipeline)) {}
@@ -10,10 +14,12 @@ TagStreamProcessor::TagStreamProcessor(Pipeline pipeline)
 bool TagStreamProcessor::push(std::vector<Tag> const &tags) {
     if (state_ != State::Open)
         return false;
+    if (tags.empty())
+        return true;
     try {
-        for (auto const &tag : tags) {
-            pipeline_.handle(std::bit_cast<tcspc::swabian_tag_event>(tag));
-        }
+        pipeline_.handle(TagSpan(
+            reinterpret_cast<tcspc::swabian_tag_event const *>(tags.data()),
+            tags.size()));
     } catch (tcspc::end_of_processing const &e) {
         // Documented libtcspc protocol (see errors.hpp): a processor
         // signals a clean, non-error completion by flushing its own

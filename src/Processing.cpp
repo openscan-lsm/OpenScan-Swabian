@@ -1,9 +1,6 @@
 #include "Processing.h"
 
-#include <fstream>
 #include <span>
-#include <stdexcept>
-#include <string>
 #include <utility>
 
 namespace {
@@ -41,15 +38,12 @@ class FrameSink {
           numFrames_(numFrames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
-        handle_bucket(event.data_bucket);
-    }
-    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
-    // concluding_histogram_array_event instead of histogram_array_event
-    // (a distinct, unrelated type, despite carrying the same data_bucket
-    // shape) -- this sink needs to be a valid handler for both, since
-    // make_processor<true> selects only the former as this sink's input.
-    void handle(tcspc::concluding_histogram_array_event<> const &event) {
-        handle_bucket(event.data_bucket);
+        callback_(channel_,
+                  std::span<tcspc::u16 const>(event.data_bucket.data(),
+                                              event.data_bucket.size()));
+        if (++framesDelivered_ == numFrames_)
+            throw tcspc::end_of_processing(
+                "acquisition complete: reached requested frame count");
     }
     void flush() {}
 
@@ -60,119 +54,25 @@ class FrameSink {
     [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
         return tcspc::processor_graph().push_entry_point(this);
     }
-
-  private:
-    template <typename Bucket> void handle_bucket(Bucket const &data_bucket) {
-        callback_(channel_, std::span<tcspc::u16 const>(data_bucket.data(),
-                                                        data_bucket.size()));
-        // Same idea as BH's LineClockPixellator calling downstream->
-        // HandleFinish() once currentLine / linesPerFrame == maxFrames --
-        // stop once the requested number of frames has been delivered, via
-        // the same clean-completion protocol as any other stop condition
-        // in this pipeline (see TagStreamProcessor::push()'s catch for
-        // tcspc::end_of_processing). Matches BH: it's IntensityImageSink,
-        // not HistogramSink, that calls stopFunc() -- the live/intensity
-        // branch owns completion, not the full-histogram branch.
-        if (++framesDelivered_ == numFrames_)
-            throw tcspc::end_of_processing(
-                "acquisition complete: reached requested frame count");
-    }
 };
 
-// DEBUG: terminal sink for the full per-pixel histogram (histogramBins
-// bins/pixel) -- writes it to the given file for offline inspection
-// instead of sending it to the frame callback (which has no way to receive
-// a per-pixel histogram cube -- see FrameSink's comment above). No
-// frame-count stop logic here; the live/intensity branch (FrameSink) owns
-// that. Remove, or replace with real FLIM file output, once no longer
-// needed.
-class HistogramDumpSink {
-    std::string filename_;
-
-  public:
-    explicit HistogramDumpSink(std::string filename)
-        : filename_(std::move(filename)) {}
-
-    void handle(tcspc::histogram_array_event<> const &event) {
-        dump_bucket(event.data_bucket);
-    }
-    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
-    // concluding_histogram_array_event instead of histogram_array_event
-    // (a distinct, unrelated type, despite carrying the same data_bucket
-    // shape) -- this sink needs to be a valid handler for both, since
-    // make_full_histo_proc<true> selects only the former as this sink's
-    // input.
-    void handle(tcspc::concluding_histogram_array_event<> const &event) {
-        dump_bucket(event.data_bucket);
-    }
-    void flush() {}
-
-    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "HistogramDumpSink");
-    }
-
-    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
-        return tcspc::processor_graph().push_entry_point(this);
-    }
-
-  private:
-    template <typename Bucket> void dump_bucket(Bucket const &data_bucket) {
-        std::ofstream debug_file(filename_,
-                                 std::ios::binary | std::ios::trunc);
-        debug_file.write(reinterpret_cast<char const *>(data_bucket.data()),
-                         static_cast<std::streamsize>(data_bucket.size() *
-                                                      sizeof(tcspc::u16)));
-    }
-};
-
-// Writes every raw tag to disk, in the vendor SDK's raw dump format
-// (back-to-back 16-byte records, decodable with tools/dump_tags.py) --
-// same format as the real SDK's Dump measurement, and what "Save Raw
-// Data" used to be wired to (a second, independent Dump/IteratorBase
-// instance pulling directly from the tagger). That approach doesn't work
-// in simulate mode: each IteratorBase there runs its own PumpLoop with
-// its own independently-seeded RNG, so two separate measurements
-// "watching the same channels" would each generate a DIFFERENT random
-// realization of the gated-photon noise -- the dump would never actually
-// match what the live pipeline processed. Tapping the live tag stream
-// here instead (via the broadcast in make_processor, gated on
-// rawDataFileName) guarantees the dump is byte-for-byte what was actually
-// processed, and matches real hardware too, where there's only one
-// physical event stream feeding every consumer either way.
-class RawTagDumpSink {
-    std::ofstream file_;
-
-  public:
-    explicit RawTagDumpSink(std::string const &filename)
-        : file_(filename, std::ios::binary | std::ios::trunc) {
-        if (!file_)
-            throw std::runtime_error("RawTagDumpSink: could not open file '" +
-                                     filename + "'");
-    }
-
-    void handle(tcspc::swabian_tag_event const &event) {
-        file_.write(reinterpret_cast<char const *>(event.bytes.data()),
-                    static_cast<std::streamsize>(event.bytes.size()));
-    }
-    void flush() { file_.flush(); }
-
-    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "RawTagDumpSink");
-    }
-
-    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
-        return tcspc::processor_graph().push_entry_point(this);
-    }
-};
-
-// Full per-pixel histogram (histogramBins bins/pixel) -- debug-dumped to
-// disk, not sent to the frame callback. See HistogramDumpSink's comment.
+// Full per-pixel histogram (histogramBins bins/pixel) -- written to disk as
+// raw u16, not sent to the frame callback (which has no way to receive a
+// per-pixel histogram cube -- see FrameSink's comment above). The array shape
+// is (frames, height, width, bins), or (height, width, bins) if cumulative.
 template <bool Cumulative>
 auto make_full_histo_proc(ProcessingParams const &params,
                           std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
     auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
+    auto writer = write_binary_stream(
+        binary_file_output_stream(*params.histogramDumpFileName,
+                                  arg::truncate{true}),
+        recycling_bucket_source<std::byte>::create(),
+        // Not flushed if the acquisition is halted, so use a granularity that
+        // never leaves part of a frame buffered.
+        arg::granularity<>{sizeof(u16)});
     struct reset_event {};
     if constexpr (Cumulative) {
         return append(
@@ -185,7 +85,8 @@ auto make_full_histo_proc(ProcessingParams const &params,
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
                     select<type_list<concluding_histogram_array_event<>>>(
-                        HistogramDumpSink(*params.histogramDumpFileName)))));
+                        extract_bucket<concluding_histogram_array_event<>>(
+                            view_as_bytes(std::move(writer)))))));
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
             arg::num_elements{num_pixels},
@@ -194,7 +95,8 @@ auto make_full_histo_proc(ProcessingParams const &params,
             select<type_list<histogram_array_event<>>>(
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
-                    HistogramDumpSink(*params.histogramDumpFileName))));
+                    extract_bucket<histogram_array_event<>>(
+                        view_as_bytes(std::move(writer))))));
     }
 }
 
@@ -263,8 +165,8 @@ auto make_processor(ProcessingParams const &params,
         ctx->tracker<count_accessor>("live_pixel_counter"),
     make_live_histo_proc<Cumulative>(params, std::move(frameCallback), ctx)))));
 
-    // The full per-pixel histogram (histogramBins bins/pixel, debug-dumped
-    // to disk by HistogramDumpSink) is only useful when a dump file name
+    // The full per-pixel histogram (histogramBins bins/pixel, written to
+    // disk) is only useful when a dump file name
     // was given. Broadcasting every time-correlated event
     // to it as well as to live_pixel_chain roughly doubles consumer-side
     // per-event work (map_to_datapoints -> map_to_bins ->
@@ -301,6 +203,12 @@ auto make_processor(ProcessingParams const &params,
             ctx->tracker<count_accessor>("pixel_counter"),
         make_full_histo_proc<Cumulative>(params, ctx)))));
 
+        // Order matters, for now: currently the acquisition ends by
+        // FrameSink (in live_pixel_chain) throwing end_of_processing on the
+        // last pixel_stop_event of the final frame, upon which broadcast
+        // flushes full_pixel_chain. The latter must have already seen that
+        // event, or else its final scan would be incomplete and rolled back
+        // out of the concluding (cumulative) array.
         return type_erased_processor<tc_event_list>(
             broadcast<tc_event_list>(
                 std::move(full_pixel_chain),
@@ -364,9 +272,11 @@ auto make_processor(ProcessingParams const &params,
         "pixel time is such that pixel stop occurs after next pixel start",
     std::move(start_stop_merge))))));
 
-    using raw_event_list = type_list<swabian_tag_event>;
+    using tag_bucket = bucket<swabian_tag_event>;
+    using bucket_event_list = type_list<tag_bucket>;
 
-    auto rest_of_chain =
+    auto unbatched_chain =
+    unbatch<tag_bucket>(
     decode_swabian_tags(
     count<detection_event<>>(ctx->tracker<count_accessor>("record_counter"),
     // TODO: On real hardware, a fixed-size circular FIFO means that when
@@ -407,35 +317,38 @@ auto make_processor(ProcessingParams const &params,
         }),
         std::move(sync_processor),
         std::move(photon_processor),
-        std::move(pixel_marker_processor))))))));
+        std::move(pixel_marker_processor)))))))));
 
-    // Raw-tag dump, only if a file name was given -- see RawTagDumpSink's
-    // comment for why this taps the live stream via a broadcast here
-    // instead of running as a second, independent Dump/IteratorBase
-    // measurement.
-    type_erased_processor<raw_event_list> raw_tag_downstream =
-        [&]() -> type_erased_processor<raw_event_list> {
+    // Save the tags exactly as processed (if a file name was given): 16-byte
+    // records in the vendor SDK's Dump format.
+    type_erased_processor<bucket_event_list> bucket_downstream =
+        [&]() -> type_erased_processor<bucket_event_list> {
         if (!params.rawDataFileName)
-            return type_erased_processor<raw_event_list>(
-                std::move(rest_of_chain));
+            return type_erased_processor<bucket_event_list>(
+                std::move(unbatched_chain));
 
-        return type_erased_processor<raw_event_list>(
-            broadcast<raw_event_list>(
-                RawTagDumpSink(*params.rawDataFileName),
-                std::move(rest_of_chain)));
+        return type_erased_processor<bucket_event_list>(
+            broadcast<bucket_event_list>(
+                view_as_bytes(
+                write_binary_stream(
+                    binary_file_output_stream(*params.rawDataFileName,
+                                              arg::truncate{true}),
+                    recycling_bucket_source<std::byte>::create(),
+                    // Not flushed if the acquisition is halted, so use a
+                    // granularity that never leaves bytes buffered.
+                    arg::granularity<>{sizeof(swabian_tag_event)})),
+                std::move(unbatched_chain)));
     }();
 
+    // Each SDK-delivered batch of tags becomes one bucket.
     return
-
-    batch<swabian_tag_event>(
+    copy_to_buckets<TagSpan, swabian_tag_event>(
         recycling_bucket_source<swabian_tag_event>::create(),
-        arg::batch_size<std::size_t>{1 << 15},
-    real_time_buffer<bucket<swabian_tag_event>>(
+    real_time_buffer<tag_bucket>(
         arg::threshold<std::size_t>{2},
-        std::chrono::milliseconds{500},
+        std::chrono::milliseconds{100},
         ctx->tracker<buffer_accessor>(kTagBufferTrackerName),
-    unbatch<bucket<swabian_tag_event>>(
-        std::move(raw_tag_downstream))));
+        std::move(bucket_downstream)));
     // clang-format on
 };
 

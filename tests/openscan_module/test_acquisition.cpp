@@ -255,11 +255,11 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     // Reaching the requested frame count only calls finish_running()
     // (IteratorBase stops polling for more data); it deliberately does NOT
     // flush the pipeline -- see IteratorBase::finish_running()'s own
-    // comment in TimeTagger.h. RawTagDumpSink's file is only closed once
+    // comment in TimeTagger.h. The raw data file is only closed once
     // something actually stops the acquisition: TimeTagger.cpp's Stop()
     // resets the AcquisitionRun, whose destructor stops the measurement,
     // halts and joins the processing thread, then destroys the graph
-    // (closing the file via std::ofstream's destructor). So this is
+    // (closing the file). So this is
     // required here, not just tidiness -- without it the file below is
     // still open when we try to read/delete it.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
@@ -318,4 +318,109 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
             FindSetting(run.settings, run.settingCount, "File Name Prefix"),
             "OpenScan-Swabian"),
         "restore File Name Prefix");
+}
+
+namespace {
+
+// Runs a kNumFrames acquisition with Save Histograms enabled and returns the
+// contents of the resulting .hist file, together with the expected number of
+// u16 elements per histogram array (height * width * bins).
+struct HistogramFile {
+    std::vector<std::uint16_t> data;
+    size_t elementsPerArray = 0;
+};
+
+constexpr uint32_t kHistNumFrames = 2;
+
+HistogramFile AcquireHistogramFile(bool cumulative) {
+    LSMFixture fx;
+
+    std::filesystem::path const scratch_dir =
+        std::filesystem::temp_directory_path() /
+        "openscan-swabian-hist-dump-test";
+    std::filesystem::remove_all(scratch_dir);
+    std::filesystem::create_directories(scratch_dir);
+    std::string const prefix = (scratch_dir / "acq").string();
+
+    int32_t bins = 0;
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+    AcquisitionSetup run = RunAcquisition(
+        fx, kHistNumFrames, cumulative, OnFrame, &capture,
+        [&](OSc_Setting **settings, size_t settingCount) {
+            CheckOk(
+                OSc_Setting_SetStringValue(
+                    FindSetting(settings, settingCount, "File Name Prefix"),
+                    prefix.c_str()),
+                "set File Name Prefix");
+            CheckOk(OSc_Setting_SetBoolValue(
+                        FindSetting(settings, settingCount, "Save Histograms"),
+                        true),
+                    "set Save Histograms");
+            CheckOk(OSc_Setting_GetInt32Value(
+                        FindSetting(settings, settingCount, "Histogram Bins"),
+                        &bins),
+                    "get Histogram Bins");
+        });
+
+    // The file stays open until the acquisition is stopped; see the Save Raw
+    // Data test above.
+    CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
+
+    OSc_Acquisition_Destroy(run.acq);
+    OSc_AcqTemplate_Destroy(run.tmpl);
+
+    HistogramFile result;
+    result.elementsPerArray = static_cast<size_t>(run.width) * run.height *
+                              static_cast<size_t>(bins);
+
+    std::filesystem::path const hist_file = prefix + "_0000.hist";
+    REQUIRE(std::filesystem::exists(hist_file));
+    auto const size = std::filesystem::file_size(hist_file);
+    REQUIRE(size % sizeof(std::uint16_t) == 0);
+    result.data.resize(size / sizeof(std::uint16_t));
+    std::ifstream file(hist_file, std::ios::binary);
+    REQUIRE(file.read(reinterpret_cast<char *>(result.data.data()),
+                      static_cast<std::streamsize>(size)));
+    file.close();
+    std::filesystem::remove_all(scratch_dir);
+
+    // Restore what this test mutated on the shared device (see
+    // device_test_support.hpp's Environment comment).
+    CheckOk(OSc_Setting_SetBoolValue(
+                FindSetting(run.settings, run.settingCount, "Save Histograms"),
+                false),
+            "restore Save Histograms");
+    CheckOk(
+        OSc_Setting_SetStringValue(
+            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
+            "OpenScan-Swabian"),
+        "restore File Name Prefix");
+    CheckOk(
+        OSc_Setting_SetBoolValue(
+            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
+        "restore Cumulative");
+
+    return result;
+}
+
+} // namespace
+
+TEST_CASE("Save Histograms writes every frame's histogram array to a .hist "
+          "file",
+          "[acquisition][slow]") {
+    HistogramFile const hist = AcquireHistogramFile(false);
+    CHECK(hist.data.size() == kHistNumFrames * hist.elementsPerArray);
+    CHECK(std::accumulate(hist.data.begin(), hist.data.end(),
+                          std::uint64_t(0)) > 0);
+}
+
+TEST_CASE("Save Histograms in Cumulative mode writes a single histogram "
+          "array, the sum of all frames, to a .hist file",
+          "[acquisition][slow]") {
+    HistogramFile const hist = AcquireHistogramFile(true);
+    CHECK(hist.data.size() == hist.elementsPerArray);
+    CHECK(std::accumulate(hist.data.begin(), hist.data.end(),
+                          std::uint64_t(0)) > 0);
 }
