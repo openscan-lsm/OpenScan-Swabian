@@ -60,8 +60,7 @@ class FrameSink {
 // per-pixel histogram cube -- see FrameSink's comment above). The array shape
 // is (frames, height, width, bins), or (height, width, bins) if cumulative.
 template <bool Cumulative>
-auto make_full_histo_proc(ProcessingParams const &params,
-                          std::shared_ptr<tcspc::context> const &ctx) {
+auto make_full_histo_proc(ProcessingParams const &params) {
     using namespace tcspc;
     auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
@@ -81,21 +80,17 @@ auto make_full_histo_proc(ProcessingParams const &params,
                 arg::num_elements{num_pixels},
                 arg::num_bins{std::size_t(params.histogramBins)},
                 arg::max_per_bin<u16>{65535}, bsource,
-                count<histogram_array_event<>>(
-                    ctx->tracker<count_accessor>("full_frame_counter"),
-                    select<type_list<concluding_histogram_array_event<>>>(
-                        extract_bucket<concluding_histogram_array_event<>>(
-                            view_as_bytes(std::move(writer)))))));
+                select<type_list<concluding_histogram_array_event<>>>(
+                    extract_bucket<concluding_histogram_array_event<>>(
+                        view_as_bytes(std::move(writer))))));
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
             arg::num_elements{num_pixels},
             arg::num_bins{std::size_t(params.histogramBins)},
             arg::max_per_bin<u16>{65535}, bsource,
             select<type_list<histogram_array_event<>>>(
-                count<histogram_array_event<>>(
-                    ctx->tracker<count_accessor>("full_frame_counter"),
-                    extract_bucket<histogram_array_event<>>(
-                        view_as_bytes(std::move(writer))))));
+                extract_bucket<histogram_array_event<>>(
+                    view_as_bytes(std::move(writer)))));
     }
 }
 
@@ -104,8 +99,7 @@ auto make_full_histo_proc(ProcessingParams const &params,
 // branch that gets displayed.
 template <bool Cumulative>
 auto make_live_histo_proc(ProcessingParams const &params,
-                          FrameCallback frameCallback,
-                          std::shared_ptr<tcspc::context> const &ctx) {
+                          FrameCallback frameCallback) {
     using namespace tcspc;
     auto bsource = recycling_bucket_source<u16>::create();
     // scan_histograms emits a histogram_array_event as soon as each frame's
@@ -119,9 +113,7 @@ auto make_live_histo_proc(ProcessingParams const &params,
         arg::num_elements{std::size_t(params.width * params.height)},
         arg::num_bins{std::size_t(1)}, arg::max_per_bin<u16>{65535}, bsource,
         select<type_list<histogram_array_event<>>>(
-            count<histogram_array_event<>>(
-                ctx->tracker<count_accessor>("frame_counter"),
-                FrameSink(std::move(frameCallback), 0))));
+            FrameSink(std::move(frameCallback), 0)));
 }
 
 template <bool Cumulative>
@@ -159,9 +151,7 @@ auto make_processor(ProcessingParams const &params,
             arg::max_bin_index<bin_index_type>{0},
             arg::clamp{true}),
     cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-    count<bin_increment_cluster_event<>>(
-        ctx->tracker<count_accessor>("live_pixel_counter"),
-    make_live_histo_proc<Cumulative>(params, std::move(frameCallback), ctx)))));
+    make_live_histo_proc<Cumulative>(params, std::move(frameCallback)))));
 
     // The full per-pixel histogram (histogramBins bins/pixel, written to
     // disk) is only useful when a dump file name
@@ -197,9 +187,7 @@ auto make_processor(ProcessingParams const &params,
                 // underflow.
                 arg::max_bin_index<bin_index_type>{bin_index_type(num_bins - 1)}),
         cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-        count<bin_increment_cluster_event<>>(
-            ctx->tracker<count_accessor>("pixel_counter"),
-        make_full_histo_proc<Cumulative>(params, ctx)))));
+        make_full_histo_proc<Cumulative>(params))));
 
         return type_erased_processor<tc_event_list>(
             broadcast<tc_event_list>(
@@ -285,7 +273,6 @@ auto make_processor(ProcessingParams const &params,
     auto unbatched_chain =
     unbatch<tag_bucket>(
     decode_swabian_tags(
-    count<detection_event<>>(ctx->tracker<count_accessor>("record_counter"),
     // TODO: On real hardware, a fixed-size circular FIFO means that when
     // software falls behind, old tags get overwritten rather than
     // unboundedly retained -- the device signals this by emitting
@@ -324,7 +311,7 @@ auto make_processor(ProcessingParams const &params,
         }),
         std::move(sync_processor),
         std::move(photon_processor),
-        std::move(pixel_marker_processor)))))))));
+        std::move(pixel_marker_processor))))))));
 
     // Save the tags exactly as processed (if a file name was given): 16-byte
     // records in the vendor SDK's Dump format.
