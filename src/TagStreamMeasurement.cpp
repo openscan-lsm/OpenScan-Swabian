@@ -21,10 +21,8 @@ TagStreamMeasurement::~TagStreamMeasurement() {
 
 bool TagStreamMeasurement::next_impl(std::vector<Tag> &incoming_tags,
                                      timestamp_t /*begin_time*/,
-                                     timestamp_t /*end_time*/) {
-    // TODO: Create and handle TimeReachedEvents for the end_time timestamp
-    // (can't hurt to do begin_time as well)
-    if (!push_(incoming_tags))
+                                     timestamp_t end_time) {
+    if (!push_(incoming_tags, end_time))
         finish_running();
     return false;
 }

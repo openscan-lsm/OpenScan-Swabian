@@ -105,22 +105,24 @@ AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
                   break;
               }
           }),
-      measurement_(
-          GetData(device)->tagger.get(), ChannelsToRegister(GetData(device)),
-          [this](std::vector<Tag> const &tags) { return Push(tags); }) {}
+      measurement_(GetData(device)->tagger.get(),
+                   ChannelsToRegister(GetData(device)),
+                   [this](std::vector<Tag> const &tags, timestamp_t end_time) {
+                       return Push(tags, end_time);
+                   }) {}
 
 bool AcquisitionRun::isRunning() { return measurement_.isRunning(); }
 
 void AcquisitionRun::waitUntilFinished() { measurement_.waitUntilFinished(); }
 
-bool AcquisitionRun::Push(std::vector<Tag> const &tags) {
+bool AcquisitionRun::Push(std::vector<Tag> const &tags, timestamp_t end_time) {
     // The consumer having ended (it logged why) is the usual way an
     // acquisition completes; checking here lets isRunning() flip promptly
     // instead of waiting for the next push to bounce end_of_processing
     // back from the buffer.
     if (processingThread_.finished())
         return false;
-    if (processor_.push(tags))
+    if (processor_.push(tags, end_time))
         return true;
     if (processor_.state() == TagStreamProcessor::State::Failed)
         OScDev_Log_Error(device_, ("AcquisitionRun: pipeline error: " +

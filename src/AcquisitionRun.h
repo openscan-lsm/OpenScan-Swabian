@@ -22,7 +22,7 @@ class AcquisitionRun {
     void waitUntilFinished();
 
   private:
-    bool Push(std::vector<Tag> const &tags);
+    bool Push(std::vector<Tag> const &tags, timestamp_t end_time);
 
     OScDev_Device *device_;
     std::shared_ptr<tcspc::context> ctx_;

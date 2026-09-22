@@ -10,11 +10,14 @@
 // constructor and stops in the destructor.
 class TagStreamMeasurement final : public IteratorBase {
   public:
-    // Returns false when it wants no more tags; the measurement then calls
-    // finish_running() and delivers nothing further. Invoked on the SDK's
-    // delivery thread under its measurement lock: must not block on anything
-    // that itself waits for this measurement.
-    using PushFunction = std::function<bool(std::vector<Tag> const &)>;
+    // Called with each block of tags and the SDK's end_time for the block
+    // (the begin time of the next block; every tag in this block has an
+    // earlier time). Returns false when it wants no more tags; the
+    // measurement then calls finish_running() and delivers nothing further.
+    // Invoked on the SDK's delivery thread under its measurement lock: must
+    // not block on anything that itself waits for this measurement.
+    using PushFunction =
+        std::function<bool(std::vector<Tag> const &, timestamp_t end_time)>;
 
     TagStreamMeasurement(TimeTaggerBase *tagger,
                          std::vector<channel_t> const &channels,
