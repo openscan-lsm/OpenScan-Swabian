@@ -273,32 +273,12 @@ auto make_processor(ProcessingParams const &params,
     auto unbatched_chain =
     unbatch<tag_bucket>(
     decode_swabian_tags(
-    // TODO: On real hardware, a fixed-size circular FIFO means that when
-    // software falls behind, old tags get overwritten rather than
-    // unboundedly retained -- the device signals this by emitting
-    // OverflowBegin/OverflowEnd/MissedEvents tags (Tag::Type in
-    // TimeTagger.h), which decode_swabian_tags turns into the
-    // begin_lost_interval_event<>/end_lost_interval_event<>/
-    // lost_counts_event<> handled right below. IteratorBase::PumpLoop
-    // (fake_timetagger/include/TimeTagger.h) currently has no notion of
-    // "falling behind" at all -- it unconditionally generates and retains
-    // every tag for however much simulated time has elapsed, however long
-    // that takes. To model real behavior (and let this exact
-    // stop_with_error path actually be exercised, instead of an
-    // ever-growing backlog), PumpLoop should detect when it can't keep up
-    // (e.g. via something like the reverted MAX_SIMULATED_STEP_PS idea) and
-    // emit synthetic overflow tags for the excess span instead of
-    // silently retaining or silently dropping it. Also worth reconsidering
-    // once that exists: whether stop_with_error (a hard stop) is still the
-    // right response to a lost interval, versus something more like a
-    // recoverable warning.
+    check_monotonic(
     stop_with_error<type_list<
         warning_event,
         begin_lost_interval_event<>,
         end_lost_interval_event<>,
         lost_counts_event<>>>("error in input data",
-    check_monotonic(
-    stop<type_list<warning_event>>("processing stopped",
     regulate_time_reached(
         arg::interval_threshold<abstime_type>{1 << 30}, // About 1 ms
         arg::count_threshold<>{1 << 18}, // 1/4 of merge buffer size
@@ -311,7 +291,7 @@ auto make_processor(ProcessingParams const &params,
         }),
         std::move(sync_processor),
         std::move(photon_processor),
-        std::move(pixel_marker_processor))))))));
+        std::move(pixel_marker_processor)))))));
 
     // Save the tags exactly as processed (if a file name was given): 16-byte
     // records in the vendor SDK's Dump format.
