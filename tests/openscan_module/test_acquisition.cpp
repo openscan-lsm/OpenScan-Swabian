@@ -8,10 +8,11 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-// Only for the Tag struct/LINE_CLOCK_CHANNEL constant, to decode the raw dump
-// byte-for-byte in the same layout Processing.cpp wrote it -- this test
-// otherwise only drives the module through the public OpenScanLib API, like
-// every other test in this directory.
+// Only for the Tag struct and the fake's channel/period constants, to decode
+// the raw dump byte-for-byte in the same layout Processing.cpp wrote it and
+// to set Sync Delay (ps) to the fake's sync period -- this test otherwise
+// only drives the module through the public OpenScanLib API, like every
+// other test in this directory.
 #include <TimeTagger.h>
 
 #include <algorithm>
@@ -75,7 +76,8 @@ struct AcquisitionSetup {
 // and the fake clock/scanner device as the clock/scanner.
 //
 // Caller owns cleanup: destroy the returned acq and tmpl when done (via
-// OSc_Acquisition_Stop() first if the pipeline needs to be flushed).
+// OSc_Acquisition_Stop() first if the pipeline needs to be flushed), and
+// call RestoreSharedSettings() to undo the settings changed here.
 AcquisitionSetup RunAcquisition(
     LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
     OSc_FrameCallback callback, void *data,
@@ -101,6 +103,13 @@ AcquisitionSetup RunAcquisition(
                 FindSetting(run.settings, run.settingCount, "Cumulative"),
                 cumulative),
             "set Cumulative");
+    // As in real use: the module's conditional filter passes the sync
+    // FOLLOWING each photon, so shifting the sync back by one period makes
+    // the difftime "time since the preceding sync" (see README.md).
+    CheckOk(OSc_Setting_SetInt32Value(
+                FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"),
+                static_cast<int32_t>(-SIMULATED_PIXEL_PERIOD_PS)),
+            "set Sync Delay (ps)");
     if (additionalSetup)
         additionalSetup(run.settings, run.settingCount);
 
@@ -137,6 +146,20 @@ AcquisitionSetup RunAcquisition(
     CheckOk(OSc_Acquisition_Wait(run.acq), "Acquisition_Wait");
 
     return run;
+}
+
+// Restores the settings RunAcquisition() itself changes on the shared device
+// (see device_test_support.hpp's Environment comment on why that matters).
+// Callers restore whatever their own additionalSetup changed.
+void RestoreSharedSettings(AcquisitionSetup const &run) {
+    CheckOk(
+        OSc_Setting_SetBoolValue(
+            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
+        "restore Cumulative");
+    CheckOk(
+        OSc_Setting_SetInt32Value(
+            FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"), 0),
+        "restore Sync Delay (ps)");
 }
 
 } // namespace
@@ -178,6 +201,7 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
     // Cleanup
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);
+    RestoreSharedSettings(run);
 }
 
 TEST_CASE("Cumulative mode delivers one image per frame, each the running "
@@ -210,18 +234,12 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
 
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);
-
-    // Restore what this test mutated on the shared device (see
-    // device_test_support.hpp's Environment comment).
-    CheckOk(
-        OSc_Setting_SetBoolValue(
-            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
-        "restore Cumulative");
+    RestoreSharedSettings(run);
 }
 
 TEST_CASE("Save Raw Data writes every registered channel (both photon and "
           "line clock edges, but only the configured sync edge) to a .raw "
-          "dump",
+          "dump, with the conditional filter applied to the sync",
           "[acquisition][slow]") {
     LSMFixture fx;
 
@@ -282,20 +300,30 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     bool sawFallingSync = false;
     bool sawRisingPhoton = false;
     bool sawFallingPhoton = false;
+    // The conditional filter's signature: never two syncs without a photon
+    // edge between them (the fake models the filter; see its PumpLoop).
+    bool syncPending = false;
+    bool sawConsecutiveSyncs = false;
     Tag tag;
     while (file.read(reinterpret_cast<char *>(&tag), sizeof(Tag))) {
         if (tag.channel == LINE_CLOCK_CHANNEL)
             sawRisingLineClock = true;
         else if (tag.channel == -LINE_CLOCK_CHANNEL)
             sawFallingLineClock = true;
-        if (tag.channel == SYNC_CHANNEL)
+        if (tag.channel == SYNC_CHANNEL) {
             sawRisingSync = true;
-        else if (tag.channel == -SYNC_CHANNEL)
+            if (syncPending)
+                sawConsecutiveSyncs = true;
+            syncPending = true;
+        } else if (tag.channel == -SYNC_CHANNEL)
             sawFallingSync = true;
-        if (tag.channel == PHOTON_CHANNEL)
+        if (tag.channel == PHOTON_CHANNEL) {
             sawRisingPhoton = true;
-        else if (tag.channel == -PHOTON_CHANNEL)
+            syncPending = false;
+        } else if (tag.channel == -PHOTON_CHANNEL) {
             sawFallingPhoton = true;
+            syncPending = false;
+        }
     }
     CHECK(sawRisingLineClock);
     CHECK(sawFallingLineClock);
@@ -303,6 +331,7 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     CHECK_FALSE(sawFallingSync); // the sync's other edge is not registered
     CHECK(sawRisingPhoton);
     CHECK(sawFallingPhoton);
+    CHECK_FALSE(sawConsecutiveSyncs);
     file.close();
     std::filesystem::remove_all(scratch_dir);
 
@@ -319,6 +348,7 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
             FindSetting(run.settings, run.settingCount, "File Name Prefix"),
             "OpenScan-Swabian"),
         "restore File Name Prefix");
+    RestoreSharedSettings(run);
 }
 
 namespace {
@@ -398,10 +428,7 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
             FindSetting(run.settings, run.settingCount, "File Name Prefix"),
             "OpenScan-Swabian"),
         "restore File Name Prefix");
-    CheckOk(
-        OSc_Setting_SetBoolValue(
-            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
-        "restore Cumulative");
+    RestoreSharedSettings(run);
 
     return result;
 }

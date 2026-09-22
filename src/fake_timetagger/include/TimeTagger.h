@@ -11,10 +11,12 @@
 // (store-and-return-what-was-set, or a fixed plausible default) --
 // there is no real hardware or clock underneath them. Synthetic event
 // generation is implemented here, for IteratorBase, via a background
-// thread -- see IteratorBase::PumpLoop. There is deliberately no API
-// anywhere on this mock (TimeTaggerBase or otherwise) for configuring
-// a channel's simulated rate or pattern, since no such API exists on the
-// real TimeTaggerBase either.
+// thread -- see IteratorBase::PumpLoop. Of the TimeTaggerBase settings,
+// only the conditional filter is honoured by the generated data (hardware
+// and software delays, dead time, and event dividers are stored but have
+// no effect). There is deliberately no API anywhere on this mock
+// (TimeTaggerBase or otherwise) for configuring a channel's simulated rate
+// or pattern, since no such API exists on the real TimeTaggerBase either.
 
 #include <algorithm>
 #include <atomic>
@@ -25,6 +27,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -129,16 +132,22 @@ class TimeTaggerBase {
         return {0, 716'000'000}; // plausible ttx-like max, in ps
     }
 
+    // Honoured by IteratorBase::PumpLoop, which reads these from its own
+    // thread -- hence the mutex, even though this project only sets the
+    // filter before starting a measurement.
     void setConditionalFilter(std::vector<channel_t> trigger,
                               std::vector<channel_t> filtered) {
+        std::lock_guard<std::mutex> lock(conditionalFilterMutex_);
         conditionalFilterTrigger_ = std::move(trigger);
         conditionalFilterFiltered_ = std::move(filtered);
     }
     void clearConditionalFilter() { setConditionalFilter({}, {}); }
     [[nodiscard]] std::vector<channel_t> getConditionalFilterTrigger() {
+        std::lock_guard<std::mutex> lock(conditionalFilterMutex_);
         return conditionalFilterTrigger_;
     }
     [[nodiscard]] std::vector<channel_t> getConditionalFilterFiltered() {
+        std::lock_guard<std::mutex> lock(conditionalFilterMutex_);
         return conditionalFilterFiltered_;
     }
 
@@ -234,6 +243,7 @@ class TimeTaggerBase {
     std::map<channel_t, timestamp_t> deadtimePs_;
     std::map<channel_t, unsigned int> eventDivider_;
 
+    std::mutex conditionalFilterMutex_;
     std::vector<channel_t> conditionalFilterTrigger_;
     std::vector<channel_t> conditionalFilterFiltered_;
 
@@ -278,12 +288,12 @@ inline bool operator==(Tag const &a, Tag const &b) {
 // -- the hardcoded line-clock/sync/gated-photon behavior for the three
 // special channels (see the file comment above), and nothing at all for
 // any other registered channel, since this fake only models the channels
-// this project actually wires up -- and delivers them via next_impl(). This
-// is enough to
-// exercise a real next_impl()-based acquisition design under simulate=true
-// without hardware; it does not model getCaptureDuration(),
-// getConfiguration(), virtual-channel allocation, or startFor()'s
-// auto-stop-after-duration (nothing in this project uses those yet).
+// this project actually wires up -- applies the tagger's conditional
+// filter, and delivers them via next_impl(). This is enough to exercise a
+// real next_impl()-based acquisition design under simulate=true without
+// hardware; it does not model getCaptureDuration(), getConfiguration(),
+// virtual-channel allocation, or startFor()'s auto-stop-after-duration
+// (nothing in this project uses those yet).
 //
 // IMPORTANT, and true of the real SDK too: the pump thread calls next_impl()
 // (a pure virtual) until stop() has fully returned. Because base-class
@@ -366,8 +376,7 @@ class IteratorBase {
   protected:
     // base_type_/extra_info_ accepted for signature compatibility with the
     // real SDK; unused here. tagger_ mirrors the real SDK's own protected
-    // `tagger` member; kept for the same reason even though nothing in
-    // this fake's own PumpLoop needs to read it back.
+    // `tagger` member; PumpLoop reads the conditional filter from it.
     explicit IteratorBase(TimeTaggerBase *tagger,
                           std::string const & /*base_type_*/ = "IteratorBase",
                           std::string const & /*extra_info_*/ = "")
@@ -450,6 +459,10 @@ class IteratorBase {
         auto last = std::chrono::steady_clock::now();
         std::mt19937_64 rng{std::random_device{}()};
         std::map<channel_t, double> nextArrivalPs;
+        // Conditional filter state: the filtered channels whose gate a
+        // trigger event has opened and no filtered event has yet closed.
+        // Persists across batches, like the hardware's.
+        std::set<channel_t> openFilterGates;
         std::optional<double> nextPhotonCandidatePs;
         // Trailing edge of a photon pulse whose rising edge was delivered in
         // an earlier batch but which itself fell at or beyond that batch's
@@ -668,6 +681,8 @@ class IteratorBase {
                 batch.begin(), batch.end(),
                 [](Tag const &a, Tag const &b) { return a.time < b.time; });
 
+            ApplyConditionalFilter(batch, openFilterGates);
+
             next_impl(batch, beginTime, endTime);
             generatedPs = generateUntilPs;
             bool const completedImage = generateUntilPs >= nextFrameBoundaryPs;
@@ -684,6 +699,39 @@ class IteratorBase {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
+    }
+
+    // Models the vendor's conditional filter ("every trigger opens the gate
+    // for one event of the filtered channel"): a tag on a trigger channel
+    // opens the gate of every filtered channel; a tag on a filtered channel
+    // passes only if that channel's gate is open, and closes it; any other
+    // filtered-channel tag is dropped. The vendor documentation describes a
+    // single filtered channel, so per-filtered-channel gates are an
+    // assumption. Tags on channels in neither list pass unchanged.
+    void ApplyConditionalFilter(std::vector<Tag> &batch,
+                                std::set<channel_t> &openGates) {
+        std::vector<channel_t> const trigger =
+            tagger_->getConditionalFilterTrigger();
+        std::vector<channel_t> const filtered =
+            tagger_->getConditionalFilterFiltered();
+        if (filtered.empty())
+            return;
+        auto const contains = [](std::vector<channel_t> const &channels,
+                                 channel_t channel) {
+            return std::find(channels.begin(), channels.end(), channel) !=
+                   channels.end();
+        };
+        std::vector<Tag> passed;
+        passed.reserve(batch.size());
+        for (Tag const &tag : batch) {
+            if (contains(filtered, tag.channel) &&
+                openGates.erase(tag.channel) == 0)
+                continue;
+            if (contains(trigger, tag.channel))
+                openGates.insert(filtered.begin(), filtered.end());
+            passed.push_back(tag);
+        }
+        batch = std::move(passed);
     }
 
     TimeTaggerBase *tagger_;

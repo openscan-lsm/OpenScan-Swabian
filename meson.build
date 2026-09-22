@@ -123,6 +123,7 @@ src = files(
     'src/ProcessingThread.cpp',
     'src/TagStreamMeasurement.cpp',
     'src/TagStreamProcessor.cpp',
+    'src/TaggerConfig.cpp',
     'src/TimeTagger.cpp',
     'src/TimeTaggerSettings.cpp',
     'src/UniqueFileName.cpp',

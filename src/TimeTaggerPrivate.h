@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AcquisitionRun.h"
+#include "TaggerConfig.h"
 
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
@@ -34,6 +35,17 @@ struct TimeTagger_PrivateData {
 inline TimeTagger_PrivateData *GetData(OScDev_Device *device) {
     return static_cast<TimeTagger_PrivateData *>(
         OScDev_Device_GetImplData(device));
+}
+
+// Requires an open device (data->tagger).
+inline TaggerChannels MakeTaggerChannels(TimeTagger_PrivateData *data) {
+    return {
+        .sync = data->syncChannel,
+        .photonLeading = data->photonChannel,
+        .photonTrailing =
+            data->tagger->getInvertedChannel(data->photonChannel),
+        .lineClock = data->lineClockChannel,
+    };
 }
 
 OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,

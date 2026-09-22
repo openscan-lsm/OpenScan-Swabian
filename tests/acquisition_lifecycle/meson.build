@@ -5,9 +5,11 @@ acquisition_lifecycle_test_srcs = [
     '../../src/ProcessingThread.cpp',
     '../../src/TagStreamMeasurement.cpp',
     '../../src/TagStreamProcessor.cpp',
+    '../../src/TaggerConfig.cpp',
     'test_processing_thread.cpp',
     'test_tag_stream_measurement.cpp',
     'test_tag_stream_processor.cpp',
+    'test_tagger_config.cpp',
 ]
 
 acquisition_lifecycle_test_exe = executable(

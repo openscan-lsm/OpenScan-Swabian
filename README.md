@@ -124,12 +124,31 @@ falling edge of input 3.
   `pixelRate` come from the current OpenScan acquisition (ROI width, pixel
   rate), not from a setting here.
 
+#### Conditional filter
+
+At a typical laser sync rate (e.g. 80 MHz) the sync channel alone would
+saturate the Time Tagger's USB bandwidth. For every acquisition the module
+therefore enables the Time Tagger's on-board
+[conditional filter](https://www.swabianinstruments.com/static/documentation/TimeTagger/sections/tutorials/conditionalFilter.html)
+with both photon edges as the *trigger* channels and the sync channel as the
+*filtered* channel: the device transmits only the first sync edge following
+each photon edge, so the sync is transmitted once per photon (twice, when a
+sync falls between a photon pulse's two edges) regardless of the laser rate.
+Both photon edges must trigger because the pipeline correlates the pulse
+midpoint, which the hardware cannot see. The consequences for **Sync Delay
+(ps)** and **Max Diff Time (ps)** are described below.
+
 ### Timing
 
-- **Sync Delay (ps)** (default `0`) — a fixed offset applied to sync
-  detections before correlating them with photons (`delay()` ahead of the
-  sync/photon pairing stage). Compensates for a known, fixed timing offset
-  between the sync and photon paths (e.g. cable length differences).
+- **Sync Delay (ps)** (default `0`) — a fixed offset applied in software to
+  sync detections before correlating them with photons (`delay()` ahead of
+  the sync/photon pairing stage). Because the conditional filter passes the
+  sync edge *following* each photon, this should be set to minus the laser
+  sync period (e.g. `-12500` for 80 MHz), which moves that sync back to
+  (approximately) where the preceding sync was, so that the difftime is the
+  usual "time since the previous laser pulse". This is a software-side shift:
+  it relabels the difftime axis but cannot change *which* sync edge the
+  hardware filter passes.
 - **Max Photon Pulse Width (ps)** (default `100000`) — the maximum allowed
   separation between a photon channel's rising and falling edges for them to
   be treated as one pulse. Should comfortably exceed the detector's real
@@ -146,6 +165,12 @@ falling edge of input 3.
   single laser pulse a photon can plausibly arrive and still belong to that
   pulse. In a typical setup many sync pulses occur within one pixel's dwell
   time, each independently contributing photons to that pixel's histogram.
+
+  It must not exceed the laser sync period. When a sync falls between a
+  photon pulse's two edges, the conditional filter passes two sync edges for
+  that photon; after the Sync Delay (ps) shift they sit one period apart, and
+  only the one within Max Diff Time (ps) pairs with the photon. A larger value
+  would count such photons twice.
 
 ### Histogram binning
 

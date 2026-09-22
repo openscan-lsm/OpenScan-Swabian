@@ -193,7 +193,9 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
     GetData(device)->run.reset();
 
     try {
-        GetData(device)->run = std::make_unique<AcquisitionRun>(device, acq);
+        TimeTagger_PrivateData *data = GetData(device);
+        ConfigureTagger(data->tagger.get(), MakeTaggerChannels(data));
+        data->run = std::make_unique<AcquisitionRun>(device, acq);
     } catch (const std::exception &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
