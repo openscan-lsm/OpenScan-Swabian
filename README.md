@@ -104,18 +104,25 @@ These are exposed as standard MicroManager device properties (device
 
 ### Channels
 
-The Time Tagger's raw channel numbers (positive = rising edge, negative =
-falling edge) that this module expects each signal to be wired to:
+The Time Tagger's raw channel numbers that this module expects each signal
+to be wired to. A positive number selects the input's rising edge and the
+corresponding negative number its falling edge, so e.g. `-3` uses the
+falling edge of input 3.
 
 - **Sync Channel** (default `2`) — the laser sync / reference clock input.
+  Only the configured edge is used and recorded; the input's other edge is
+  never registered with the Time Tagger.
 - **Photon Channel** (default `3`) — the detector (e.g. PMT) pulse input.
-  Both edges of this channel are used: the module measures pulse width by
-  pairing each rising detection with its matching falling detection.
+  Both edges of this input are used: the configured edge is the pulse's
+  leading edge and the opposite edge its trailing edge. The module pairs each
+  leading edge with its matching trailing edge and correlates the pulse's
+  midpoint against the sync.
 - **Line Clock Channel** (default `1`) — a per-scan-line marker from the
-  scanner. Used to derive per-pixel timing windows: each line-clock tick
-  starts a run of `width` pixel windows, each `1e12 / pixelRate` picoseconds
-  wide, where `width` and `pixelRate` come from the current OpenScan
-  acquisition (ROI width, pixel rate), not from a setting here.
+  scanner; the configured edge marks the start of a line. Used to derive
+  per-pixel timing windows: each line-clock tick starts a run of `width`
+  pixel windows, each `1e12 / pixelRate` picoseconds wide, where `width` and
+  `pixelRate` come from the current OpenScan acquisition (ROI width, pixel
+  rate), not from a setting here.
 
 ### Timing
 

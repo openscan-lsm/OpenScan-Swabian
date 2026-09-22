@@ -67,13 +67,17 @@ FrameCallback MakeFrameCallback(OScDev_Acquisition *acq) {
 }
 
 std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
-    std::vector<channel_t> channels;
-    for (auto const channel :
-         {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
-        channels.push_back(channel);
-        channels.push_back(data->tagger->getInvertedChannel(channel));
-    }
-    return channels;
+    // The sync channel's inverted edge is not used by the pipeline, and the
+    // Time Tagger transmits every registered channel, so at laser sync rates
+    // it would cost as much bandwidth as the sync channel itself.
+    auto *tagger = data->tagger.get();
+    return {
+        data->syncChannel,
+        data->photonChannel,
+        tagger->getInvertedChannel(data->photonChannel),
+        data->lineClockChannel,
+        tagger->getInvertedChannel(data->lineClockChannel),
+    };
 }
 
 } // namespace

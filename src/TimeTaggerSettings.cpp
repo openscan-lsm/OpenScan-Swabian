@@ -22,22 +22,29 @@ template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
     static OScDev_Error
     GetNumericConstraintType(OScDev_Setting *,
                              OScDev_ValueConstraint *constraintType) {
-        *constraintType = OScDev_ValueConstraint_Range;
+        *constraintType = OScDev_ValueConstraint_DiscreteValues;
         return OScDev_OK;
     }
-    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
-                                 int32_t *max) {
-        *min = 1;
-        *max = 8; // TODO: Get the actual number of channels from the device
+    static OScDev_Error GetDiscreteValues(OScDev_Setting *,
+                                          OScDev_NumArray **values) {
+        // Positive = rising edge, negative = falling edge, as in the SDK.
+        // TODO: Get the actual number of channels from the device
+        constexpr int32_t numChannels = 8;
+        *values = OScDev_NumArray_Create();
+        for (int32_t ch = -numChannels; ch <= numChannels; ++ch) {
+            if (ch != 0)
+                OScDev_NumArray_Append(*values, ch);
+        }
         return OScDev_OK;
     }
 
   public:
-    static inline OScDev_SettingImpl impl = {.GetNumericConstraintType =
-                                                 GetNumericConstraintType,
-                                             .GetInt32 = Get,
-                                             .SetInt32 = Set,
-                                             .GetInt32Range = GetRange};
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32DiscreteValues = GetDiscreteValues,
+    };
 };
 
 class SyncDelaySetting {

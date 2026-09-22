@@ -219,8 +219,9 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
         "restore Cumulative");
 }
 
-TEST_CASE("Save Raw Data writes every registered channel, including the "
-          "line clock's falling edge, to a .raw dump",
+TEST_CASE("Save Raw Data writes every registered channel (both photon and "
+          "line clock edges, but only the configured sync edge) to a .raw "
+          "dump",
           "[acquisition][slow]") {
     LSMFixture fx;
 
@@ -299,7 +300,7 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     CHECK(sawRisingLineClock);
     CHECK(sawFallingLineClock);
     CHECK(sawRisingSync);
-    CHECK(sawFallingSync);
+    CHECK_FALSE(sawFallingSync); // the sync's other edge is not registered
     CHECK(sawRisingPhoton);
     CHECK(sawFallingPhoton);
     file.close();
