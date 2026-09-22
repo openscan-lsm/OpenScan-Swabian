@@ -1,5 +1,6 @@
 #include "Processing.h"
 
+#include <limits>
 #include <span>
 #include <utility>
 
@@ -21,6 +22,10 @@ struct pixel_tick_event {
     tcspc::i64 abstime;
 };
 
+struct acquisition_complete_event {
+    tcspc::i64 abstime;
+};
+
 // Calls the frame callback with a properly-sized width*height buffer (one
 // u16 sample per pixel -- the FrameCallback contract has no room for a
 // per-pixel histogram cube). This is therefore only ever wired to the
@@ -29,21 +34,15 @@ struct pixel_tick_event {
 class FrameSink {
     FrameCallback callback_;
     uint32_t channel_;
-    uint32_t numFrames_;
-    uint32_t framesDelivered_ = 0;
 
   public:
-    FrameSink(FrameCallback callback, uint32_t channel, uint32_t numFrames)
-        : callback_(std::move(callback)), channel_(channel),
-          numFrames_(numFrames) {}
+    FrameSink(FrameCallback callback, uint32_t channel)
+        : callback_(std::move(callback)), channel_(channel) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
         callback_(channel_,
                   std::span<tcspc::u16 const>(event.data_bucket.data(),
                                               event.data_bucket.size()));
-        if (++framesDelivered_ == numFrames_)
-            throw tcspc::end_of_processing(
-                "acquisition complete: reached requested frame count");
     }
     void flush() {}
 
@@ -102,8 +101,7 @@ auto make_full_histo_proc(ProcessingParams const &params,
 
 // Single-bin ("intensity") histogram -- one count per pixel, timing
 // ignored, sent live to the frame callback via FrameSink. This is the
-// branch that gets displayed, and the one responsible for signaling
-// acquisition completion (see FrameSink's comment).
+// branch that gets displayed.
 template <bool Cumulative>
 auto make_live_histo_proc(ProcessingParams const &params,
                           FrameCallback frameCallback,
@@ -123,7 +121,7 @@ auto make_live_histo_proc(ProcessingParams const &params,
         select<type_list<histogram_array_event<>>>(
             count<histogram_array_event<>>(
                 ctx->tracker<count_accessor>("frame_counter"),
-                FrameSink(std::move(frameCallback), 0, params.numFrames))));
+                FrameSink(std::move(frameCallback), 0))));
 }
 
 template <bool Cumulative>
@@ -203,22 +201,31 @@ auto make_processor(ProcessingParams const &params,
             ctx->tracker<count_accessor>("pixel_counter"),
         make_full_histo_proc<Cumulative>(params, ctx)))));
 
-        // Order matters, for now: currently the acquisition ends by
-        // FrameSink (in live_pixel_chain) throwing end_of_processing on the
-        // last pixel_stop_event of the final frame, upon which broadcast
-        // flushes full_pixel_chain. The latter must have already seen that
-        // event, or else its final scan would be incomplete and rolled back
-        // out of the concluding (cumulative) array.
         return type_erased_processor<tc_event_list>(
             broadcast<tc_event_list>(
                 std::move(full_pixel_chain),
                 std::move(live_pixel_chain)));
     }();
 
+    // End the acquisition after the requested number of frames. Counted here,
+    // downstream of the merge and upstream of any branching, so that every
+    // branch has seen the final pixel_stop_event (and thus completed its
+    // final frame) before the stop flushes and ends processing. Each
+    // pixel_stop_event closes exactly one pixel cluster (start/stop
+    // alternation is enforced upstream), so width * height stops is one
+    // frame in every scan_histograms.
     auto [tc_merge, start_stop_merge] =
     merge<tc_event_list>(
         arg::max_buffered<>{1 << 20},
-        std::move(tc_downstream));
+    count_up_to<pixel_stop_event, acquisition_complete_event, never_event,
+                true>(
+        arg::threshold<u64>{u64(params.width) * params.height *
+                            params.numFrames},
+        arg::limit<u64>{std::numeric_limits<u64>::max()},
+        arg::initial_count<u64>{0},
+    stop<type_list<acquisition_complete_event>>(
+        "reached requested frame count",
+    std::move(tc_downstream))));
 
     auto [sync_merge, cfd_merge] =
     merge<type_list<detection_event<>, time_reached_event<>>>(

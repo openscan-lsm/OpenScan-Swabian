@@ -15,6 +15,10 @@ if cxx.get_id() != 'msvc' and cxx.get_id() != 'clang-cl'
     error('Unsupported compiler (requires msvc or clang-cl)')
 endif
 
+# Keep <Windows.h> (pulled in via the OpenScan and vendor SDK headers) from
+# defining min/max macros that break std::numeric_limits<T>::max() etc.
+add_project_arguments('-DNOMINMAX', language: 'cpp')
+
 if get_option('simulate')
     # A header-only fake of the vendor SDK (see src/fake_timetagger/), put
     # ahead of the real SDK on the include path so `#include <TimeTagger.h>`
