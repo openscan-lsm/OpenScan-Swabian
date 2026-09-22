@@ -11,19 +11,19 @@ using difftime_type = tcspc::default_numeric_traits::difftime_type;
 using bin_index_type = tcspc::default_numeric_traits::bin_index_type;
 
 struct pixel_start_event {
-    tcspc::i64 abstime;
+    abstime_type abstime;
 };
 
 struct pixel_stop_event {
-    tcspc::i64 abstime;
+    abstime_type abstime;
 };
 
 struct pixel_tick_event {
-    tcspc::i64 abstime;
+    abstime_type abstime;
 };
 
 struct acquisition_complete_event {
-    tcspc::i64 abstime;
+    abstime_type abstime;
 };
 
 // Calls the frame callback with a properly-sized width*height buffer (one
