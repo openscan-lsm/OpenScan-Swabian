@@ -20,6 +20,10 @@ struct TimeTagger_PrivateData {
 
     int32_t syncDelay_ps = 0;
     int32_t lineDelay_ps = 0;
+    int32_t photonDelay_ps = 0;
+    // Whether a hardware delay has been written to the currently open device;
+    // see ConfigureTagger.
+    bool hardwareDelaysApplied = false;
     int32_t maxPhotonPulseWidth_ps = 100'000;
     int32_t maxDiffTime_ps = 12'500;
 

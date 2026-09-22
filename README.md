@@ -148,7 +148,21 @@ midpoint, which the hardware cannot see. The consequences for **Sync Delay
   (approximately) where the preceding sync was, so that the difftime is the
   usual "time since the previous laser pulse". This is a software-side shift:
   it relabels the difftime axis but cannot change *which* sync edge the
-  hardware filter passes.
+  hardware filter passes; for that, see **Photon Delay (ps)**.
+- **Photon Delay (ps)** (default `0`) — a hardware delay applied on the Time
+  Tagger to both edges of the photon channel. The allowed range is queried
+  from the device (±2.5 µs on a Time Tagger X, ±2.0 µs on a Time Tagger
+  Ultra); the Time Tagger 20 has no hardware delay, and there this setting
+  must stay `0` (it is then never written to the device). The delay is
+  applied on board, before the conditional filter, so it shifts which sync
+  edge the filter passes for each photon and therefore where within the sync
+  period the fluorescence decay lands. Tune it so that the decay does not
+  straddle a sync edge: a decay whose start coincides with a sync edge would
+  otherwise be split between the beginning and the end of the difftime
+  window. Sync Delay (ps) cannot do this, because it is applied in software
+  after the filter has already chosen the sync edge. Fixed offsets between
+  the sync and photon paths (e.g. cable length) are also compensated here.
+  The sync and line clock channels always get a hardware delay of `0`.
 - **Max Photon Pulse Width (ps)** (default `100000`) — the maximum allowed
   separation between a photon channel's rising and falling edges for them to
   be treated as one pulse. Should comfortably exceed the detector's real

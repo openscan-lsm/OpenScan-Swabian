@@ -46,7 +46,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 13);
+    REQUIRE(count == 14);
 
     SECTION("Sync Channel: default, allowed values, and round-trip") {
         auto *s = FindSetting(settings, count, "Sync Channel");
@@ -111,6 +111,26 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         int32_t min = -1, max = 0;
         CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
         CHECK(min == 0);
+    }
+
+    SECTION("Photon Delay (ps): defaults to zero, round-trips, and reports "
+            "the device's hardware delay range") {
+        auto *s = FindSetting(settings, count, "Photon Delay (ps)");
+        REQUIRE(s != nullptr);
+        int32_t v = -1;
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
+        CHECK(v == 0);
+
+        // The fake's getDelayHardwareRange().
+        int32_t min = 0, max = 0;
+        CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
+        CHECK(min == -2'500'000);
+        CHECK(max == 2'500'000);
+
+        CheckOk(OSc_Setting_SetInt32Value(s, -4000), "set");
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
+        CHECK(v == -4000);
+        CheckOk(OSc_Setting_SetInt32Value(s, 0), "restore");
     }
 
     SECTION("Max Photon Pulse Width (ps) and Max Diff Time (ps) defaults") {
