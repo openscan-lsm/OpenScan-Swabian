@@ -160,15 +160,15 @@ TEST_CASE("SYNC_CHANNEL emits alternating edges with a positive pulse "
     }
 }
 
-TEST_CASE("PHOTON_CHANNEL emits alternating edges with a positive pulse "
-          "width",
+TEST_CASE("PHOTON_CHANNEL emits alternating edges forming negative pulses "
+          "with a positive pulse width",
           "[data]") {
     auto const tags = Collect({PHOTON_CHANNEL, -PHOTON_CHANNEL},
                               std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 1);
 
-    // Ensure we start with a rising edge and alternate from there
-    REQUIRE(tags.front().channel == PHOTON_CHANNEL);
+    // Ensure we start with a falling (leading) edge and alternate from there
+    REQUIRE(tags.front().channel == -PHOTON_CHANNEL);
     for (size_t i = 0; i < tags.size(); ++i) {
         REQUIRE((tags[i].channel == PHOTON_CHANNEL ||
                  tags[i].channel == -PHOTON_CHANNEL));
@@ -177,7 +177,7 @@ TEST_CASE("PHOTON_CHANNEL emits alternating edges with a positive pulse "
     }
 
     for (size_t i = 0; i < tags.size(); ++i) {
-        if (tags[i].channel == -PHOTON_CHANNEL)
+        if (tags[i].channel == PHOTON_CHANNEL)
             CHECK(tags[i].time > tags[i - 1].time); // positive pulse width
     }
 }
@@ -187,8 +187,9 @@ TEST_CASE("PHOTON_CHANNEL emits alternating edges with a positive pulse "
 TEST_CASE("Every photon detection follows, and is close to, the most "
           "recent sync pulse",
           "[data]") {
-    auto const tags =
-        Collect({SYNC_CHANNEL, PHOTON_CHANNEL}, std::chrono::milliseconds(50));
+    // -PHOTON_CHANNEL is the leading (falling) edge of the negative pulse.
+    auto const tags = Collect({SYNC_CHANNEL, -PHOTON_CHANNEL},
+                              std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 0);
 
     // The current implementation of the fake_timetagger generates photons
@@ -204,7 +205,7 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
 
     std::optional<timestamp_t> last_sync_time;
     for (auto const &t : tags) {
-        REQUIRE((t.channel == SYNC_CHANNEL || t.channel == PHOTON_CHANNEL));
+        REQUIRE((t.channel == SYNC_CHANNEL || t.channel == -PHOTON_CHANNEL));
         if (t.channel == SYNC_CHANNEL) {
             last_sync_time = t.time;
             continue;

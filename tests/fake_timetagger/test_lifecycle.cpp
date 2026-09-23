@@ -35,11 +35,11 @@ TEST_CASE("getTimeTaggerModel resolves the fake serial and rejects others",
 TEST_CASE(
     "createTimeTagger accepts an empty or matching serial, rejects others",
     "[connection]") {
-    TimeTaggerBase *empty = createTimeTagger("");
+    TimeTagger *empty = createTimeTagger("");
     REQUIRE(empty != nullptr);
     freeTimeTagger(empty);
 
-    TimeTaggerBase *matching = createTimeTagger(FAKE_SERIAL);
+    TimeTagger *matching = createTimeTagger(FAKE_SERIAL);
     REQUIRE(matching != nullptr);
     freeTimeTagger(matching);
 

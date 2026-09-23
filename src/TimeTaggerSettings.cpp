@@ -3,6 +3,7 @@
 #include <TimeTagger.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -47,6 +48,57 @@ template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
         .GetInt32 = Get,
         .SetInt32 = Set,
         .GetInt32DiscreteValues = GetDiscreteValues,
+    };
+};
+
+template <double TimeTagger_PrivateData::*Level,
+          int32_t TimeTagger_PrivateData::*Channel>
+class TriggerLevelSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, double *value) {
+        *value = GetSettingDeviceData(setting)->*Level;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, double value) {
+        GetSettingDeviceData(setting)->*Level = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *setting, double *min,
+                                 double *max) {
+        auto *data = GetSettingDeviceData(setting);
+        if (!data->tagger) {
+            // Widest range of any known model (Time Tagger Ultra).
+            *min = -2.5;
+            *max = 2.5;
+            return OScDev_OK;
+        }
+        std::vector<double> range;
+        try {
+            range =
+                data->tagger->getTriggerLevelRange(std::abs(data->*Channel));
+        } catch (std::exception const &e) {
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
+        }
+        if (range.size() != 2) {
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(
+                "Unexpected trigger level range from Time Tagger"));
+        }
+        *min = range[0];
+        *max = range[1];
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetFloat64 = Get,
+        .SetFloat64 = Set,
+        .GetFloat64Range = GetRange,
     };
 };
 
@@ -383,6 +435,26 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
         &s, "Line Clock Channel", OScDev_ValueType_Int32,
         &ChannelSetting<&TimeTagger_PrivateData::lineClockChannel>::impl,
+        device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s, "Sync Trigger Level (V)", OScDev_ValueType_Float64,
+        &TriggerLevelSetting<&TimeTagger_PrivateData::syncTriggerLevel_V,
+                             &TimeTagger_PrivateData::syncChannel>::impl,
+        device));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s, "Photon Trigger Level (V)", OScDev_ValueType_Float64,
+        &TriggerLevelSetting<&TimeTagger_PrivateData::photonTriggerLevel_V,
+                             &TimeTagger_PrivateData::photonChannel>::impl,
         device));
     if (err) {
         goto error;

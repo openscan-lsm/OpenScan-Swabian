@@ -92,7 +92,7 @@ AcquisitionSetup RunAcquisition(
         "set Sync Channel");
     CheckOk(
         OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Photon Channel"), 3),
+            FindSetting(run.settings, run.settingCount, "Photon Channel"), -3),
         "set Photon Channel");
     CheckOk(
         OSc_Setting_SetInt32Value(

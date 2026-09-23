@@ -46,7 +46,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 14);
+    REQUIRE(count == 16);
 
     SECTION("Sync Channel: default, allowed values, and round-trip") {
         auto *s = FindSetting(settings, count, "Sync Channel");
@@ -82,9 +82,47 @@ TEST_CASE("device settings expose the expected names, defaults, and "
 
         int32_t v = 0;
         CheckOk(OSc_Setting_GetInt32Value(photon, &v), "get photon");
-        CHECK(v == 3);
+        CHECK(v == -3);
         CheckOk(OSc_Setting_GetInt32Value(lineClock, &v), "get line clock");
         CHECK(v == 1);
+    }
+
+    SECTION("Sync Trigger Level (V): default, device range, and round-trip") {
+        auto *s = FindSetting(settings, count, "Sync Trigger Level (V)");
+        REQUIRE(s != nullptr);
+        double v = 1.0;
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+        CHECK(v == 0.0);
+
+        // The fake's getTriggerLevelRange().
+        double min = 0.0, max = 0.0;
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(s, &min, &max), "range");
+        CHECK(min == -1.0);
+        CHECK(max == 1.0);
+
+        CheckOk(OSc_Setting_SetFloat64Value(s, 0.35), "set");
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get2");
+        CHECK(v == 0.35);
+        CheckOk(OSc_Setting_SetFloat64Value(s, 0.0), "restore");
+    }
+
+    SECTION(
+        "Photon Trigger Level (V): default, device range, and round-trip") {
+        auto *s = FindSetting(settings, count, "Photon Trigger Level (V)");
+        REQUIRE(s != nullptr);
+        double v = 1.0;
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+        CHECK(v == -0.1);
+
+        double min = 0.0, max = 0.0;
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(s, &min, &max), "range");
+        CHECK(min == -1.0);
+        CHECK(max == 1.0);
+
+        CheckOk(OSc_Setting_SetFloat64Value(s, -0.45), "set");
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get2");
+        CHECK(v == -0.45);
+        CheckOk(OSc_Setting_SetFloat64Value(s, -0.1), "restore");
     }
 
     SECTION("Sync Delay (ps): defaults to zero and round-trips") {

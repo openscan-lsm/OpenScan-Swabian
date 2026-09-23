@@ -1,6 +1,6 @@
 # Unit tests for the acquisition lifecycle components, built against the
 # fake SDK regardless of the `simulate` option (like tests/fake_timetagger),
-# since they only need IteratorBase and TimeTaggerBase, not hardware.
+# since they only need IteratorBase and the fake TimeTagger, not hardware.
 acquisition_lifecycle_test_srcs = [
     '../../src/ProcessingThread.cpp',
     '../../src/TagStreamMeasurement.cpp',

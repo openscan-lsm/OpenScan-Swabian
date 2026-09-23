@@ -112,11 +112,13 @@ falling edge of input 3.
 - **Sync Channel** (default `2`) — the laser sync / reference clock input.
   Only the configured edge is used and recorded; the input's other edge is
   never registered with the Time Tagger.
-- **Photon Channel** (default `3`) — the detector (e.g. PMT) pulse input.
+- **Photon Channel** (default `-3`) — the detector (e.g. PMT) pulse input.
   Both edges of this input are used: the configured edge is the pulse's
   leading edge and the opposite edge its trailing edge. The module pairs each
   leading edge with its matching trailing edge and correlates the pulse's
-  midpoint against the sync.
+  midpoint against the sync. The negative default selects the falling edge
+  as the leading edge, matching the negative pulse a typical detector/preamp
+  produces; use the positive channel number for a positive pulse.
 - **Line Clock Channel** (default `1`) — a per-scan-line marker from the
   scanner; the configured edge marks the start of a line. Used to derive
   per-pixel timing windows: each line-clock tick starts a run of `width`
@@ -137,6 +139,29 @@ sync falls between a photon pulse's two edges) regardless of the laser rate.
 Both photon edges must trigger because the pipeline correlates the pulse
 midpoint, which the hardware cannot see. The consequences for **Sync Delay
 (ps)** and **Max Diff Time (ps)** are described below.
+
+### Trigger levels
+
+The trigger level is the comparator threshold, in volts, of a physical Time
+Tagger input: an edge is detected when the signal crosses this level. A level
+belongs to the input, not to an edge, so both edges of an input share one
+level; in particular a single setting covers the photon input's leading and
+trailing edges. The levels are written to the device each time an
+acquisition is armed.
+
+- **Sync Trigger Level (V)** (default `0.0`) — threshold for the sync input.
+- **Photon Trigger Level (V)** (default `-0.1`) — threshold for the photon
+  (detector) input. Negative because a typical detector/preamp pulse is
+  negative; a good starting point is about half the pulse amplitude. This
+  default and the Photon Channel default (`-3`, falling leading edge) are
+  chosen together for such a pulse.
+
+The allowed range is queried from the device: `0.0`–`2.5 V` on a Time Tagger
+20 (so the photon level must be made positive there, along with the Photon
+Channel), `-2.5`–`2.5 V` on a Time Tagger Ultra, and `-1`–`1 V` on a Time
+Tagger X. The line clock input has no setting: its level is fixed at `1.5 V`
+(TTL/LVTTL compatible), or the device's range maximum if that is lower
+(`1.0 V` on a Time Tagger X).
 
 ### Timing
 
@@ -235,7 +260,9 @@ sample per pixel.
 When built with `-Dsimulate=true`, `src/fake_timetagger/` synthesizes
 activity on three fixed channels so the pipeline has realistic-looking data
 to process without hardware: a line clock, a sync channel, and gated Poisson
-photon noise correlated to the sync channel. These are fixed, hardcoded
+photon noise correlated to the sync channel. The simulated photons are
+negative pulses (falling edge first), matching the default Photon Channel of
+`-3`. These are fixed, hardcoded
 constants (`LineClockChannel`, `SyncChannel`, `PhotonChannel`, and their
 rates, in
 `src/fake_timetagger/include/TimeTagger.h`) rather than derived from the

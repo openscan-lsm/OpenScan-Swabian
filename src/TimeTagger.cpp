@@ -116,9 +116,8 @@ static OScDev_Error TimeTagger_GetName(OScDev_Device *device, char *name) {
 static OScDev_Error TimeTagger_Open(OScDev_Device *device) {
     TimeTagger_PrivateData *data = GetData(device);
     try {
-        data->tagger =
-            std::unique_ptr<TimeTaggerBase, void (*)(TimeTaggerBase *)>{
-                createTimeTagger(data->serial), &freeTimeTagger};
+        data->tagger = std::unique_ptr<TimeTagger, void (*)(TimeTaggerBase *)>{
+            createTimeTagger(data->serial), &freeTimeTagger};
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
     }
@@ -196,6 +195,7 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
     try {
         TimeTagger_PrivateData *data = GetData(device);
         ConfigureTagger(data->tagger.get(), MakeTaggerChannels(data),
+                        data->syncTriggerLevel_V, data->photonTriggerLevel_V,
                         data->photonDelay_ps, data->hardwareDelaysApplied);
         data->run = std::make_unique<AcquisitionRun>(device, acq);
     } catch (const std::exception &e) {
