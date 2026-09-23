@@ -11,10 +11,11 @@
 // (store-and-return-what-was-set, or a fixed plausible default) --
 // there is no real hardware or clock underneath them. Synthetic event
 // generation is implemented here, for IteratorBase, via a background
-// thread -- see IteratorBase::PumpLoop. Of the TimeTaggerBase settings,
-// only the conditional filter is honoured by the generated data (hardware
-// and software delays, dead time, and event dividers are stored but have
-// no effect). There is deliberately no API anywhere on this mock
+// thread -- see IteratorBase::PumpLoop. Of the TimeTaggerBase and
+// TimeTaggerHardware settings, only the conditional filter is honoured by
+// the generated data (hardware and software delays, dead time, event
+// dividers, and trigger levels are stored but have no effect). There is
+// deliberately no API anywhere on this mock
 // (TimeTaggerBase or otherwise) for configuring a channel's simulated rate
 // or pattern, since no such API exists on the real TimeTaggerBase either.
 
@@ -254,6 +255,36 @@ class TimeTaggerBase {
     ReferenceClockState referenceClockState_;
     SoftwareClockState softwareClockState_;
 };
+
+// Fake of the real SDK's TimeTaggerHardware (the physical-device-only API).
+// Trigger levels are stored as given, without clamping to the range, so
+// tests can observe exactly what was written.
+class TimeTaggerHardware {
+  public:
+    TimeTaggerHardware() = default;
+    virtual ~TimeTaggerHardware() = default;
+
+    TimeTaggerHardware(TimeTaggerHardware const &) = delete;
+    TimeTaggerHardware &operator=(TimeTaggerHardware const &) = delete;
+
+    void setTriggerLevel(channel_t channel, double voltage) {
+        triggerLevelV_[channel] = voltage;
+    }
+    [[nodiscard]] double getTriggerLevel(channel_t channel) {
+        return triggerLevelV_[channel];
+    }
+    [[nodiscard]] std::vector<double> getTriggerLevelRange(channel_t) {
+        return {-1.0, 1.0}; // ttx-like range, in V
+    }
+
+  private:
+    std::map<channel_t, double> triggerLevelV_;
+};
+
+// Fake of the real SDK's TimeTagger: the class createTimeTagger() returns,
+// combining the base (measurement-facing) and hardware-facing APIs.
+class TimeTagger : virtual public TimeTaggerBase,
+                   virtual public TimeTaggerHardware {};
 
 // A single event delivered from the (simulated) Time Tagger backend.
 // Layout matches the real SDK's Tag exactly (1+1+2+4+8 = 16 bytes, no
@@ -753,14 +784,14 @@ inline constexpr char FAKE_MODEL[] = "Simulated Time Tagger";
 // matches (or is left empty, meaning "first available"), matching real SDK
 // semantics -- empty serial connects to the first device found, a wrong
 // serial throws. Does not model the `resolution` parameter or
-// createTimeTaggerVirtual/TimeTaggerHardware/TimeTaggerNetwork; nothing in
-// this project uses those yet (see file-level comment above).
-inline TimeTaggerBase *createTimeTagger(std::string const &serial = "") {
+// createTimeTaggerVirtual/TimeTaggerNetwork; nothing in this project uses
+// those yet (see file-level comment above).
+inline TimeTagger *createTimeTagger(std::string const &serial = "") {
     if (!serial.empty() && serial != FAKE_SERIAL) {
         throw std::runtime_error("No Time Tagger device with serial '" +
                                  serial + "' found");
     }
-    return new TimeTaggerBase();
+    return new TimeTagger();
 }
 
 inline void freeTimeTagger(TimeTaggerBase *tagger) { delete tagger; }

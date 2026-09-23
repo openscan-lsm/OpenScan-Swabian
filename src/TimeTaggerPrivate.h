@@ -10,13 +10,16 @@
 
 struct TimeTagger_PrivateData {
     std::string serial;
-    std::unique_ptr<TimeTaggerBase, void (*)(TimeTaggerBase *)> tagger = {
-        nullptr, nullptr};
+    std::unique_ptr<TimeTagger, void (*)(TimeTaggerBase *)> tagger = {nullptr,
+                                                                      nullptr};
     std::unique_ptr<AcquisitionRun> run = nullptr;
 
     int32_t lineClockChannel = 1;
     int32_t syncChannel = 2;
     int32_t photonChannel = -3;
+
+    double syncTriggerLevel_V = 0.0;
+    double photonTriggerLevel_V = -0.1;
 
     int32_t syncDelay_ps = 0;
     int32_t lineDelay_ps = 0;

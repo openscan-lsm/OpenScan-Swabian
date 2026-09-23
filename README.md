@@ -140,6 +140,29 @@ Both photon edges must trigger because the pipeline correlates the pulse
 midpoint, which the hardware cannot see. The consequences for **Sync Delay
 (ps)** and **Max Diff Time (ps)** are described below.
 
+### Trigger levels
+
+The trigger level is the comparator threshold, in volts, of a physical Time
+Tagger input: an edge is detected when the signal crosses this level. A level
+belongs to the input, not to an edge, so both edges of an input share one
+level; in particular a single setting covers the photon input's leading and
+trailing edges. The levels are written to the device each time an
+acquisition is armed.
+
+- **Sync Trigger Level (V)** (default `0.0`) — threshold for the sync input.
+- **Photon Trigger Level (V)** (default `-0.1`) — threshold for the photon
+  (detector) input. Negative because a typical detector/preamp pulse is
+  negative; a good starting point is about half the pulse amplitude. This
+  default and the Photon Channel default (`-3`, falling leading edge) are
+  chosen together for such a pulse.
+
+The allowed range is queried from the device: `0.0`–`2.5 V` on a Time Tagger
+20 (so the photon level must be made positive there, along with the Photon
+Channel), `-2.5`–`2.5 V` on a Time Tagger Ultra, and `-1`–`1 V` on a Time
+Tagger X. The line clock input has no setting: its level is fixed at `1.5 V`
+(TTL/LVTTL compatible), or the device's range maximum if that is lower
+(`1.0 V` on a Time Tagger X).
+
 ### Timing
 
 - **Sync Delay (ps)** (default `0`) — a fixed offset applied in software to

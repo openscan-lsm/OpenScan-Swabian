@@ -23,6 +23,21 @@ TEST_CASE("hardware delay round-trips and reports a plausible range",
     CHECK(range[1] > 0);
 }
 
+TEST_CASE("trigger level round-trips per channel and reports a plausible "
+          "range",
+          "[TimeTagger]") {
+    TimeTagger tagger;
+    tagger.setTriggerLevel(2, 0.25);
+    tagger.setTriggerLevel(3, -0.3);
+    CHECK(tagger.getTriggerLevel(2) == 0.25);
+    CHECK(tagger.getTriggerLevel(3) == -0.3);
+
+    auto const range = tagger.getTriggerLevelRange(3);
+    REQUIRE(range.size() == 2);
+    CHECK(range[0] == -1.0);
+    CHECK(range[1] == 1.0);
+}
+
 TEST_CASE("software delay round-trips per channel", "[TimeTaggerBase]") {
     TimeTaggerBase tagger;
     tagger.setDelaySoftware(2, 42);
