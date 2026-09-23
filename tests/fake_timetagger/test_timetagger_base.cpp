@@ -2,6 +2,9 @@
 
 #include <TimeTagger.h>
 
+#include <algorithm>
+#include <vector>
+
 TEST_CASE("input delay round-trips per channel", "[TimeTaggerBase]") {
     TimeTaggerBase tagger;
     tagger.setInputDelay(5, 12345);
@@ -36,6 +39,20 @@ TEST_CASE("trigger level round-trips per channel and reports a plausible "
     REQUIRE(range.size() == 2);
     CHECK(range[0] == -1.0);
     CHECK(range[1] == 1.0);
+}
+
+TEST_CASE("channel list reports both edges of each simulated input and "
+          "honors the edge filter",
+          "[TimeTagger]") {
+    TimeTagger tagger;
+    auto all = tagger.getChannelList();
+    std::sort(all.begin(), all.end());
+    CHECK(all == std::vector<channel_t>{-4, -3, -2, -1, 1, 2, 3, 4});
+    CHECK(tagger.getChannelList(ChannelEdge::Rising) ==
+          std::vector<channel_t>{1, 2, 3, 4});
+    CHECK(tagger.getChannelList(ChannelEdge::Falling) ==
+          std::vector<channel_t>{-1, -2, -3, -4});
+    CHECK(tagger.getChannelList(ChannelEdge::HighResAll).empty());
 }
 
 TEST_CASE("software delay round-trips per channel", "[TimeTaggerBase]") {

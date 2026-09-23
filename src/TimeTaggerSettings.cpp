@@ -29,16 +29,24 @@ template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
         *constraintType = OScDev_ValueConstraint_DiscreteValues;
         return OScDev_OK;
     }
-    static OScDev_Error GetDiscreteValues(OScDev_Setting *,
+    static OScDev_Error GetDiscreteValues(OScDev_Setting *setting,
                                           OScDev_NumArray **values) {
-        // Positive = rising edge, negative = falling edge, as in the SDK.
-        // TODO: Get the actual number of channels from the device
-        constexpr int32_t numChannels = 8;
-        *values = OScDev_NumArray_Create();
-        for (int32_t ch = -numChannels; ch <= numChannels; ++ch) {
-            if (ch != 0)
-                OScDev_NumArray_Append(*values, ch);
+        auto *data = GetSettingDeviceData(setting);
+        if (!data->tagger) {
+            return OScDev_Error_ReturnAsCode(
+                OScDev_Error_Create("Time Tagger is not open"));
         }
+        // Positive = rising edge, negative = falling edge, as in the SDK.
+        std::vector<channel_t> channels;
+        try {
+            channels = data->tagger->getChannelList(ChannelEdge::All);
+        } catch (std::exception const &e) {
+            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
+        }
+        std::sort(channels.begin(), channels.end());
+        *values = OScDev_NumArray_Create();
+        for (channel_t ch : channels)
+            OScDev_NumArray_Append(*values, ch);
         return OScDev_OK;
     }
 

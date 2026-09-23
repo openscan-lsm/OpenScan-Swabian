@@ -55,19 +55,19 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
         CHECK(v == 2);
 
-        // Negative channel numbers select the falling edge.
+        // Negative channel numbers select the falling edge. The fake's
+        // getChannelList(), sorted.
         int32_t *values = nullptr;
         size_t n = 0;
         CheckOk(OSc_Setting_GetInt32DiscreteValues(s, &values, &n),
                 "discrete values");
-        std::vector<int32_t> const expected = {-8, -7, -6, -5, -4, -3, -2, -1,
-                                               1,  2,  3,  4,  5,  6,  7,  8};
+        std::vector<int32_t> const expected = {-4, -3, -2, -1, 1, 2, 3, 4};
         std::vector<int32_t> const got(values, values + n);
         CHECK(got == expected);
 
-        CheckOk(OSc_Setting_SetInt32Value(s, 5), "set");
+        CheckOk(OSc_Setting_SetInt32Value(s, 4), "set");
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
-        CHECK(v == 5);
+        CHECK(v == 4);
         CheckOk(OSc_Setting_SetInt32Value(s, -2), "set negative");
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get3");
         CHECK(v == -2);

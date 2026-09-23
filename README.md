@@ -107,7 +107,8 @@ These are exposed as standard MicroManager device properties (device
 The Time Tagger's raw channel numbers that this module expects each signal
 to be wired to. A positive number selects the input's rising edge and the
 corresponding negative number its falling edge, so e.g. `-3` uses the
-falling edge of input 3.
+falling edge of input 3. The allowed channel numbers are queried from the
+connected device.
 
 - **Sync Channel** (default `2`) — the laser sync / reference clock input.
   Only the configured edge is used and recorded; the input's other edge is

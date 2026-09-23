@@ -46,6 +46,7 @@ constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 constexpr channel_t LINE_CLOCK_CHANNEL = 1;
 constexpr channel_t SYNC_CHANNEL = 2;
 constexpr channel_t PHOTON_CHANNEL = 3;
+constexpr channel_t NUM_SIMULATED_INPUTS = 4;
 
 constexpr timestamp_t MAX_SIMULATED_STEP_PS = 10'000'000;
 
@@ -55,6 +56,23 @@ constexpr timestamp_t SIMULATED_SYNC_PULSE_WIDTH_PS = 1'000;
 constexpr timestamp_t SIMULATED_PHOTON_PULSE_WIDTH_PS = 2'000;
 constexpr timestamp_t SIMULATED_PHOTON_GATE_WIDTH_PS = 10'000;
 constexpr double SIMULATED_PHOTON_GATE_RATE_HZ = 1e8;
+
+enum class ChannelEdge : int {
+    NoFalling = 1 << 0,
+    NoRising = 1 << 1,
+    NoStandard = 1 << 2,
+    NoHighRes = 1 << 3,
+
+    All = 0,
+    Rising = 1,
+    Falling = 2,
+    HighResAll = 4,
+    HighResRising = 4 | 1,
+    HighResFalling = 4 | 2,
+    StandardAll = 8,
+    StandardRising = 8 | 1,
+    StandardFalling = 8 | 2,
+};
 
 class IteratorBase; // Full definition below, after TimeTaggerBase; only
                     // used by pointer/reference up to that point.
@@ -258,7 +276,8 @@ class TimeTaggerBase {
 
 // Fake of the real SDK's TimeTaggerHardware (the physical-device-only API).
 // Trigger levels are stored as given, without clamping to the range, so
-// tests can observe exactly what was written.
+// tests can observe exactly what was written. All inputs are simulated as
+// Standard (not HighRes) resolution.
 class TimeTaggerHardware {
   public:
     TimeTaggerHardware() = default;
@@ -275,6 +294,23 @@ class TimeTaggerHardware {
     }
     [[nodiscard]] std::vector<double> getTriggerLevelRange(channel_t) {
         return {-1.0, 1.0}; // ttx-like range, in V
+    }
+
+    [[nodiscard]] std::vector<channel_t>
+    getChannelList(ChannelEdge type = ChannelEdge::All) {
+        auto const has = [type](ChannelEdge bit) {
+            return (static_cast<int>(type) & static_cast<int>(bit)) != 0;
+        };
+        std::vector<channel_t> channels;
+        if (has(ChannelEdge::NoStandard))
+            return channels;
+        for (channel_t ch = 1; ch <= NUM_SIMULATED_INPUTS; ++ch) {
+            if (!has(ChannelEdge::NoRising))
+                channels.push_back(ch);
+            if (!has(ChannelEdge::NoFalling))
+                channels.push_back(-ch);
+        }
+        return channels;
     }
 
   private:
