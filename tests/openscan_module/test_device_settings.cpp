@@ -82,7 +82,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
 
         int32_t v = 0;
         CheckOk(OSc_Setting_GetInt32Value(photon, &v), "get photon");
-        CHECK(v == 3);
+        CHECK(v == -3);
         CheckOk(OSc_Setting_GetInt32Value(lineClock, &v), "get line clock");
         CHECK(v == 1);
     }

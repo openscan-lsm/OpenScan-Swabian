@@ -112,11 +112,13 @@ falling edge of input 3.
 - **Sync Channel** (default `2`) — the laser sync / reference clock input.
   Only the configured edge is used and recorded; the input's other edge is
   never registered with the Time Tagger.
-- **Photon Channel** (default `3`) — the detector (e.g. PMT) pulse input.
+- **Photon Channel** (default `-3`) — the detector (e.g. PMT) pulse input.
   Both edges of this input are used: the configured edge is the pulse's
   leading edge and the opposite edge its trailing edge. The module pairs each
   leading edge with its matching trailing edge and correlates the pulse's
-  midpoint against the sync.
+  midpoint against the sync. The negative default selects the falling edge
+  as the leading edge, matching the negative pulse a typical detector/preamp
+  produces; use the positive channel number for a positive pulse.
 - **Line Clock Channel** (default `1`) — a per-scan-line marker from the
   scanner; the configured edge marks the start of a line. Used to derive
   per-pixel timing windows: each line-clock tick starts a run of `width`
@@ -235,7 +237,9 @@ sample per pixel.
 When built with `-Dsimulate=true`, `src/fake_timetagger/` synthesizes
 activity on three fixed channels so the pipeline has realistic-looking data
 to process without hardware: a line clock, a sync channel, and gated Poisson
-photon noise correlated to the sync channel. These are fixed, hardcoded
+photon noise correlated to the sync channel. The simulated photons are
+negative pulses (falling edge first), matching the default Photon Channel of
+`-3`. These are fixed, hardcoded
 constants (`LineClockChannel`, `SyncChannel`, `PhotonChannel`, and their
 rates, in
 `src/fake_timetagger/include/TimeTagger.h`) rather than derived from the

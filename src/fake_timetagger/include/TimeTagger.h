@@ -464,7 +464,7 @@ class IteratorBase {
         // Persists across batches, like the hardware's.
         std::set<channel_t> openFilterGates;
         std::optional<double> nextPhotonCandidatePs;
-        // Trailing edge of a photon pulse whose rising edge was delivered in
+        // Trailing edge of a photon pulse whose leading edge was delivered in
         // an earlier batch but which itself fell at or beyond that batch's
         // endTime (every tag must satisfy tag.time < end_time).
         std::optional<double> pendingPhotonTrailingPs;
@@ -502,11 +502,14 @@ class IteratorBase {
                           -PHOTON_CHANNEL) != registeredChannels_.end();
             if (photonPosRegistered || photonNegRegistered) {
                 // Gated Poisson photon noise correlated to the simulated
-                // sync channel (see the sync/photon comment above). Both
-                // polarities are generated together here, from
-                // one shared draw sequence, so pair_one_between finds a
-                // matching rising/falling pair for every simulated photon
-                // instead of two independently drifting tag streams.
+                // sync channel (see the sync/photon comment above). Pulses
+                // are negative, like a typical detector/preamp output: the
+                // leading edge is falling (-PHOTON_CHANNEL), the trailing
+                // edge rising (PHOTON_CHANNEL). Both edges are generated
+                // together here, from one shared draw sequence, so
+                // pair_one_between finds a matching pair for every
+                // simulated photon instead of two independently drifting
+                // tag streams.
                 std::exponential_distribution<double> gateDist(
                     SIMULATED_PHOTON_GATE_RATE_HZ);
                 // gateDist(rng) is continuous, so it occasionally draws a
@@ -530,10 +533,10 @@ class IteratorBase {
                 if (pendingPhotonTrailingPs &&
                     static_cast<timestamp_t>(*pendingPhotonTrailingPs) <
                         endTime) {
-                    if (photonNegRegistered)
+                    if (photonPosRegistered)
                         batch.emplace_back(
                             static_cast<timestamp_t>(*pendingPhotonTrailingPs),
-                            -PHOTON_CHANNEL);
+                            PHOTON_CHANNEL);
                     pendingPhotonTrailingPs.reset();
                 }
                 for (;;) {
@@ -562,24 +565,24 @@ class IteratorBase {
                     double const offsetInPeriod = t - periodStart;
                     if (offsetInPeriod <
                         static_cast<double>(SIMULATED_PHOTON_GATE_WIDTH_PS)) {
-                        if (photonPosRegistered)
+                        if (photonNegRegistered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
-                                               PHOTON_CHANNEL);
+                                               -PHOTON_CHANNEL);
                         double const trailingPs =
                             t + static_cast<double>(
                                     SIMULATED_PHOTON_PULSE_WIDTH_PS);
                         if (static_cast<timestamp_t>(trailingPs) < endTime) {
-                            if (photonNegRegistered)
+                            if (photonPosRegistered)
                                 batch.emplace_back(
                                     static_cast<timestamp_t>(trailingPs),
-                                    -PHOTON_CHANNEL);
+                                    PHOTON_CHANNEL);
                         } else {
                             pendingPhotonTrailingPs = trailingPs;
                         }
                         // Schedule the next candidate from this pulse's
-                        // FALLING edge, not its rising edge -- otherwise a
-                        // short draw can land the next rising edge before
-                        // this pulse's falling edge, producing two rising
+                        // TRAILING edge, not its leading edge -- otherwise a
+                        // short draw can land the next leading edge before
+                        // this pulse's trailing edge, producing two falling
                         // transitions in a row on the same channel, which
                         // is not physically possible for a real detector
                         // pulse (a single digital line's edges must

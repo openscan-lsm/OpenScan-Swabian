@@ -16,7 +16,7 @@ struct TimeTagger_PrivateData {
 
     int32_t lineClockChannel = 1;
     int32_t syncChannel = 2;
-    int32_t photonChannel = 3;
+    int32_t photonChannel = -3;
 
     int32_t syncDelay_ps = 0;
     int32_t lineDelay_ps = 0;
