@@ -146,6 +146,13 @@ osdev = shared_module(
     ],
 )
 
+dump_graph_exe = executable(
+    'dump_graph',
+    ['tools/dump_graph.cpp', 'src/Processing.cpp'],
+    include_directories: include_directories('src'),
+    dependencies: [libtcspc_dep],
+)
+
 if get_option('tests').enabled()
     catch2_with_main_dep = dependency(
         'catch2-with-main',

@@ -37,6 +37,10 @@ image.
 - `tools/dump_tags.py` — decodes a raw Time Tagger tag dump (the format
   written by the SDK's `Dump` measurement, and by this module's own "Save Raw
   Data" setting) into human-readable text.
+- `tools/dump_graph.cpp` — the `dump_graph` executable, which prints the
+  libtcspc processing graph (built by the same `MakeProcessingPipeline` the
+  module uses) in Graphviz dot format. See
+  [Processing graph](#processing-graph).
 
 ## Building
 
@@ -87,6 +91,17 @@ meson compile -C builddir
 No source changes are needed to switch between the two — `#include
 <TimeTagger.h>` resolves to one or the other purely via the include path
 meson selects, based on the `simulate` option.
+
+### Processing graph
+
+The build also produces `dump_graph.exe`, which prints the processing graph
+in Graphviz dot format. The graph's shape depends on the "cumulative" and
+file output settings, selected with `--cumulative`, `--histogram-dump`, and
+`--raw-data`:
+
+```
+builddir\dump_graph.exe --histogram-dump | dot -Tsvg -o graph.svg
+```
 
 ### Installing into Micro-Manager
 
