@@ -44,7 +44,7 @@ struct TimeTagger_PrivateData {
     int32_t maxPhotonPulseWidth_ps = 100'000;
     int32_t maxDiffTime_ps = 12'500;
 
-    bool cumulative = false;
+    bool intensityImagesAreCumulative = false;
     int32_t histogramBins = 256;
     int32_t histogramBinWidth_ps = 50;
 

@@ -77,7 +77,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
             "SaveHistograms",
             "HistogramBins",
             "HistogramBinWidth_ps",
-            "Cumulative",
+            "IntensityImagesAreCumulative",
             "SaveRawData",
             "FileNamePrefix",
         };
@@ -348,7 +348,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
 
     SECTION("boolean settings default to false and round-trip") {
         for (std::string const &name :
-             {"SaveHistograms", "Cumulative", "SaveRawData"}) {
+             {"SaveHistograms", "IntensityImagesAreCumulative",
+              "SaveRawData"}) {
             auto *s = FindSetting(settings, count, name);
             REQUIRE(s != nullptr);
             bool v = true;

@@ -107,7 +107,7 @@ struct AcquisitionSetup {
 // OSc_Acquisition_Stop() first if the pipeline needs to be flushed), and
 // call RestoreSharedSettings() to undo the settings changed here.
 AcquisitionSetup PrepareAcquisition(
-    LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
+    LSMFixture &fx, uint32_t numberOfFrames, bool cumulativeIntensity,
     OSc_FrameCallback callback, void *data,
     std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
     AcquisitionSetup run;
@@ -127,10 +127,11 @@ AcquisitionSetup PrepareAcquisition(
         OSc_Setting_SetInt32Value(
             FindSetting(run.settings, run.settingCount, "LineClockInput"), 1),
         "set LineClockInput");
-    CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Cumulative"),
-                cumulative),
-            "set Cumulative");
+    CheckOk(
+        OSc_Setting_SetBoolValue(FindSetting(run.settings, run.settingCount,
+                                             "IntensityImagesAreCumulative"),
+                                 cumulativeIntensity),
+        "set IntensityImagesAreCumulative");
     // As in real use: the module's conditional filter passes the sync
     // FOLLOWING each photon, so shifting the sync back by one period makes
     // the difftime "time since the preceding sync" (see README.md).
@@ -174,11 +175,12 @@ AcquisitionSetup PrepareAcquisition(
 
 // PrepareAcquisition(), then arms, starts, and waits for the acquisition.
 AcquisitionSetup RunAcquisition(
-    LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
+    LSMFixture &fx, uint32_t numberOfFrames, bool cumulativeIntensity,
     OSc_FrameCallback callback, void *data,
     std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
-    AcquisitionSetup run = PrepareAcquisition(fx, numberOfFrames, cumulative,
-                                              callback, data, additionalSetup);
+    AcquisitionSetup run =
+        PrepareAcquisition(fx, numberOfFrames, cumulativeIntensity, callback,
+                           data, additionalSetup);
     CheckOk(OSc_Acquisition_Arm(run.acq), "Acquisition_Arm");
     CheckOk(OSc_Acquisition_Start(run.acq), "Acquisition_Start");
     CheckOk(OSc_Acquisition_Wait(run.acq), "Acquisition_Wait");
@@ -190,9 +192,10 @@ AcquisitionSetup RunAcquisition(
 // Callers restore whatever their own additionalSetup changed.
 void RestoreSharedSettings(AcquisitionSetup const &run) {
     CheckOk(
-        OSc_Setting_SetBoolValue(
-            FindSetting(run.settings, run.settingCount, "Cumulative"), false),
-        "restore Cumulative");
+        OSc_Setting_SetBoolValue(FindSetting(run.settings, run.settingCount,
+                                             "IntensityImagesAreCumulative"),
+                                 false),
+        "restore IntensityImagesAreCumulative");
     CheckOk(OSc_Setting_SetFloat64Value(
                 FindSetting(run.settings, run.settingCount, "SyncDelay_ns"),
                 -12.5),
@@ -240,8 +243,8 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
     RestoreSharedSettings(run);
 }
 
-TEST_CASE("Cumulative mode delivers one image per frame, each the running "
-          "sum of every frame so far",
+TEST_CASE("IntensityImagesAreCumulative delivers one image per frame, each "
+          "the running sum of every frame so far",
           "[acquisition][slow]") {
     LSMFixture fx;
 
@@ -259,7 +262,7 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
     auto const &frames = capture.frames.at(0);
     REQUIRE(frames.size() == kNumFrames);
 
-    // Cumulative mode never resets or subtracts, so every pixel can only
+    // Cumulative intensity never resets or subtracts, so every pixel can only
     // grow or stay the same from one delivered frame to the next -- i.e.
     // frame N is frame N-1 plus that frame's own new (random) counts.
     for (size_t f = 1; f < frames.size(); ++f) {
@@ -389,9 +392,10 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
 
 namespace {
 
-// Runs a kNumFrames acquisition with SaveHistograms enabled and returns the
-// contents of the resulting .hist file, together with the expected number of
-// u16 elements per histogram array (height * width * bins).
+// Runs a kHistNumFrames acquisition with SaveHistograms enabled and returns
+// the contents of the resulting .hist file (the acquisition total), together
+// with the expected number of u16 elements per histogram array (height *
+// width * bins).
 struct HistogramFile {
     std::vector<std::uint16_t> data;
     size_t elementsPerArray = 0;
@@ -401,7 +405,7 @@ constexpr uint32_t kHistNumFrames = 2;
 
 // With twoDetectors, Detector1 (input -4) is enabled in addition to
 // Detector0.
-HistogramFile AcquireHistogramFile(bool cumulative, bool twoDetectors) {
+HistogramFile AcquireHistogramFile(bool twoDetectors) {
     LSMFixture fx;
 
     std::filesystem::path const scratch_dir =
@@ -416,7 +420,7 @@ HistogramFile AcquireHistogramFile(bool cumulative, bool twoDetectors) {
     capture.width = kResolution;
     capture.height = kResolution;
     AcquisitionSetup run = RunAcquisition(
-        fx, kHistNumFrames, cumulative, OnFrame, &capture,
+        fx, kHistNumFrames, false, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
             CheckOk(OSc_Setting_SetStringValue(
                         FindSetting(settings, settingCount, "FileNamePrefix"),
@@ -478,18 +482,10 @@ std::uint64_t Sum(std::vector<std::uint16_t>::const_iterator begin,
 
 } // namespace
 
-TEST_CASE("SaveHistograms writes every frame's histogram array to a .hist "
-          "file",
+TEST_CASE("SaveHistograms writes a single histogram array, the sum of all "
+          "frames, to a .hist file",
           "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(false, false);
-    CHECK(hist.data.size() == kHistNumFrames * hist.elementsPerArray);
-    CHECK(Sum(hist.data.begin(), hist.data.end()) > 0);
-}
-
-TEST_CASE("SaveHistograms in Cumulative mode writes a single histogram "
-          "array, the sum of all frames, to a .hist file",
-          "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(true, false);
+    HistogramFile const hist = AcquireHistogramFile(false);
     CHECK(hist.data.size() == hist.elementsPerArray);
     CHECK(Sum(hist.data.begin(), hist.data.end()) > 0);
 }
@@ -497,10 +493,8 @@ TEST_CASE("SaveHistograms in Cumulative mode writes a single histogram "
 TEST_CASE("SaveHistograms with two detectors writes a histogram array per "
           "detector",
           "[acquisition][slow]") {
-    bool const cumulative = GENERATE(false, true);
-    INFO("cumulative = " << cumulative);
-    HistogramFile const hist = AcquireHistogramFile(cumulative, true);
-    size_t const numArrays = (cumulative ? 1 : kHistNumFrames) * 2;
+    HistogramFile const hist = AcquireHistogramFile(true);
+    size_t const numArrays = 2;
     REQUIRE(hist.data.size() == numArrays * hist.elementsPerArray);
     for (size_t i = 0; i < numArrays; ++i) {
         INFO("array " << i);

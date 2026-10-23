@@ -8,13 +8,17 @@ subdir('openscan_module')
 # Smoke tests for tools/dump_graph.cpp, one per graph shape
 dump_graph_variants = {
     'default': [],
-    'cumulative': ['--cumulative'],
+    'cumulative_intensity': ['--cumulative-intensity'],
     'all_outputs': ['--histogram-dump', '--raw-data'],
-    'cumulative_all_outputs': ['--cumulative', '--histogram-dump', '--raw-data'],
+    'cumulative_intensity_all_outputs': [
+        '--cumulative-intensity',
+        '--histogram-dump',
+        '--raw-data',
+    ],
     'four_detectors': ['--detectors', '4'],
-    'four_detectors_cumulative_all_outputs': [
+    'four_detectors_cumulative_intensity_all_outputs': [
         '--detectors', '4',
-        '--cumulative',
+        '--cumulative-intensity',
         '--histogram-dump',
         '--raw-data',
     ],

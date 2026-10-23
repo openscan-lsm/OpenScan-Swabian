@@ -374,27 +374,28 @@ std::vector<SettingEntry> MakeSettingEntries() {
     [&]<std::size_t... D>(std::index_sequence<D...>) {
         (AppendDetectorSettings<D>(entries), ...);
     }(std::make_index_sequence<kMaxDetectors>());
-    entries.insert(entries.end(),
-                   {
-                       {"MaxPhotonPulseWidth_ns", OScDev_ValueType_Float64,
-                        &NanosecondSetting<&Field<&PD::maxPhotonPulseWidth_ps>,
-                                           PositiveNsRange>::impl},
-                       {"MaxDiffTime_ns", OScDev_ValueType_Float64,
-                        &NanosecondSetting<&Field<&PD::maxDiffTime_ps>,
-                                           PositiveNsRange>::impl},
-                       {"SaveHistograms", OScDev_ValueType_Bool,
-                        &BoolSetting<&Field<&PD::saveHistograms>>::impl},
-                       {"HistogramBins", OScDev_ValueType_Int32,
-                        &HistogramBinsSetting::impl},
-                       {"HistogramBinWidth_ps", OScDev_ValueType_Int32,
-                        &HistogramBinWidthSetting::impl},
-                       {"Cumulative", OScDev_ValueType_Bool,
-                        &BoolSetting<&Field<&PD::cumulative>>::impl},
-                       {"SaveRawData", OScDev_ValueType_Bool,
-                        &BoolSetting<&Field<&PD::saveRawData>>::impl},
-                       {"FileNamePrefix", OScDev_ValueType_String,
-                        &FileNamePrefixSetting::impl},
-                   });
+    entries.insert(
+        entries.end(),
+        {
+            {"MaxPhotonPulseWidth_ns", OScDev_ValueType_Float64,
+             &NanosecondSetting<&Field<&PD::maxPhotonPulseWidth_ps>,
+                                PositiveNsRange>::impl},
+            {"MaxDiffTime_ns", OScDev_ValueType_Float64,
+             &NanosecondSetting<&Field<&PD::maxDiffTime_ps>,
+                                PositiveNsRange>::impl},
+            {"SaveHistograms", OScDev_ValueType_Bool,
+             &BoolSetting<&Field<&PD::saveHistograms>>::impl},
+            {"HistogramBins", OScDev_ValueType_Int32,
+             &HistogramBinsSetting::impl},
+            {"HistogramBinWidth_ps", OScDev_ValueType_Int32,
+             &HistogramBinWidthSetting::impl},
+            {"IntensityImagesAreCumulative", OScDev_ValueType_Bool,
+             &BoolSetting<&Field<&PD::intensityImagesAreCumulative>>::impl},
+            {"SaveRawData", OScDev_ValueType_Bool,
+             &BoolSetting<&Field<&PD::saveRawData>>::impl},
+            {"FileNamePrefix", OScDev_ValueType_String,
+             &FileNamePrefixSetting::impl},
+        });
     return entries;
 }
 

@@ -48,7 +48,7 @@ constexpr channel_t LeadingChannel(std::uint32_t detector) {
     return -(3 + channel_t(detector));
 }
 
-ProcessingParams MakeParams(bool cumulative,
+ProcessingParams MakeParams(bool cumulativeIntensity,
                             std::optional<std::string> histogramFile) {
     ProcessingParams params{
         .width = kWidth,
@@ -62,7 +62,7 @@ ProcessingParams MakeParams(bool cumulative,
         .lineDelay_ps = 0,
         .maxPhotonPulseWidth_ps = 2000,
         .maxDiffTime_ps = kBins * kBinWidth,
-        .cumulative = cumulative,
+        .intensityImagesAreCumulative = cumulativeIntensity,
         .histogramBins = kBins,
         .histogramBinWidth_ps = kBinWidth,
         .histogramDumpFileName = std::move(histogramFile),
@@ -199,10 +199,10 @@ TEST_CASE("MakeProcessingPipeline rejects an out-of-range detector count",
 }
 
 TEST_CASE("Each detector gets its own live frames", "[processing]") {
-    bool const cumulative = GENERATE(false, true);
-    INFO("cumulative = " << cumulative);
+    bool const cumulativeIntensity = GENERATE(false, true);
+    INFO("cumulativeIntensity = " << cumulativeIntensity);
     auto const result =
-        Run(MakeParams(cumulative, std::nullopt), MakeTags(kPhotons));
+        Run(MakeParams(cumulativeIntensity, std::nullopt), MakeTags(kPhotons));
 
     CHECK(result.outcome == ProcessingThread::Outcome::Completed);
     REQUIRE(result.frames.size() == kNumDetectors);
@@ -216,7 +216,7 @@ TEST_CASE("Each detector gets its own live frames", "[processing]") {
             std::vector<std::uint16_t> expected(kNumPixels);
             for (Photon const &p : kPhotons) {
                 if (p.detector == ch &&
-                    (p.frame == f || (cumulative && p.frame < f)))
+                    (p.frame == f || (cumulativeIntensity && p.frame < f)))
                     ++expected[PixelIndex(p)];
             }
             CHECK(frames[f] == expected);
@@ -224,28 +224,23 @@ TEST_CASE("Each detector gets its own live frames", "[processing]") {
     }
 }
 
-TEST_CASE("Saved histograms are laid out by frame, channel, pixel, and bin",
+TEST_CASE("Saved histogram is the acquisition total, laid out by channel, "
+          "pixel, and bin",
           "[processing]") {
-    bool const cumulative = GENERATE(false, true);
-    INFO("cumulative = " << cumulative);
+    bool const cumulativeIntensity = GENERATE(false, true);
+    INFO("cumulativeIntensity = " << cumulativeIntensity);
     std::filesystem::path const file = std::filesystem::temp_directory_path() /
                                        "openscan-swabian-test-processing.hist";
     std::filesystem::remove(file);
 
-    auto const result =
-        Run(MakeParams(cumulative, file.string()), MakeTags(kPhotons));
+    auto const result = Run(MakeParams(cumulativeIntensity, file.string()),
+                            MakeTags(kPhotons));
     CHECK(result.outcome == ProcessingThread::Outcome::Completed);
 
-    std::size_t const savedFrames = cumulative ? 1 : kNumFrames;
-    std::vector<std::uint16_t> expected(savedFrames * kNumDetectors *
-                                        kNumPixels * kBins);
-    for (Photon const &p : kPhotons) {
-        std::size_t const frame = cumulative ? 0 : p.frame;
-        ++expected[((frame * kNumDetectors + p.detector) * kNumPixels +
-                    PixelIndex(p)) *
-                       kBins +
+    std::vector<std::uint16_t> expected(kNumDetectors * kNumPixels * kBins);
+    for (Photon const &p : kPhotons)
+        ++expected[(p.detector * kNumPixels + PixelIndex(p)) * kBins +
                    std::size_t(p.bin)];
-    }
 
     REQUIRE(std::filesystem::file_size(file) ==
             expected.size() * sizeof(std::uint16_t));
