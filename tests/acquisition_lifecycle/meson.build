@@ -2,10 +2,12 @@
 # fake SDK regardless of the `simulate` option (like tests/fake_timetagger),
 # since they only need IteratorBase and the fake TimeTagger, not hardware.
 acquisition_lifecycle_test_srcs = [
+    '../../src/Processing.cpp',
     '../../src/ProcessingThread.cpp',
     '../../src/TagStreamMeasurement.cpp',
     '../../src/TagStreamProcessor.cpp',
     '../../src/TaggerConfig.cpp',
+    'test_processing.cpp',
     'test_processing_thread.cpp',
     'test_tag_stream_measurement.cpp',
     'test_tag_stream_processor.cpp',

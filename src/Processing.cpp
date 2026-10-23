@@ -1,7 +1,11 @@
 #include "Processing.h"
 
+#include <array>
+#include <cstddef>
 #include <limits>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace {
@@ -55,22 +59,77 @@ class FrameSink {
     }
 };
 
+// Not a valid Time Tagger channel; pads the per-detector-slot arrays.
+constexpr std::int32_t kNoChannel = std::numeric_limits<std::int32_t>::min();
+
+using slot_channels = std::array<std::int32_t, kMaxDetectors>;
+
+slot_channels padded_channels(ProcessingParams const &params,
+                              std::int32_t DetectorChannels::*member) {
+    slot_channels ret;
+    ret.fill(kNoChannel);
+    for (std::size_t i = 0; i < params.detectors.size(); ++i)
+        ret[i] = params.detectors[i].*member;
+    return ret;
+}
+
+// Routes each detector's events (by leading channel) to its slot index.
+auto slot_router(slot_channels const &leading) {
+    std::array<std::pair<std::int32_t, std::size_t>, kMaxDetectors> pairs;
+    for (std::size_t i = 0; i < kMaxDetectors; ++i)
+        pairs[i] = {leading[i], i};
+    return tcspc::channel_router(pairs);
+}
+
+// Routes sync to 0, both edges of every detector to 1, line clock to 2.
+auto raw_tag_router(ProcessingParams const &params,
+                    slot_channels const &leading,
+                    slot_channels const &trailing) {
+    std::array<std::pair<std::int32_t, std::size_t>, 2 + 2 * kMaxDetectors>
+        pairs;
+    pairs[0] = {params.syncChannel, 0};
+    pairs[1] = {params.lineClockChannel, 2};
+    for (std::size_t i = 0; i < kMaxDetectors; ++i) {
+        pairs[2 + 2 * i] = {leading[i], 1};
+        pairs[3 + 2 * i] = {trailing[i], 1};
+    }
+    return tcspc::channel_router(pairs);
+}
+
+template <typename Processor, typename MakeSlot>
+auto make_slots(MakeSlot make_slot) {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+        return std::array<Processor, kMaxDetectors>{make_slot(I)...};
+    }(std::make_index_sequence<kMaxDetectors>());
+}
+
+// Pairs each detector slot's leading and trailing edges (one pair_one_between
+// per slot; padded slots never match).
+template <std::size_t I, typename Downstream>
+auto pair_pulses(slot_channels const &leading, slot_channels const &trailing,
+                 abstime_type window, Downstream downstream) {
+    using namespace tcspc;
+    if constexpr (I == kMaxDetectors) {
+        return downstream;
+    } else {
+        return pair_one_between(arg::start_channel{leading[I]},
+                                std::array{trailing[I]},
+                                arg::time_window<abstime_type>{window},
+                                pair_pulses<I + 1>(leading, trailing, window,
+                                                   std::move(downstream)));
+    }
+}
+
 // Full per-pixel histogram (histogramBins bins/pixel) -- written to disk as
 // raw u16, not sent to the frame callback (which has no way to receive a
-// per-pixel histogram cube -- see FrameSink's comment above). The array shape
-// is (frames, height, width, bins), or (height, width, bins) if cumulative.
-template <bool Cumulative>
-auto make_full_histo_proc(ProcessingParams const &params) {
+// per-pixel histogram cube -- see FrameSink's comment above). Emits the
+// array's bytes to downstream.
+template <bool Cumulative, typename Downstream>
+auto make_full_histo_proc(ProcessingParams const &params,
+                          Downstream downstream) {
     using namespace tcspc;
     auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
-    auto writer = write_binary_stream(
-        binary_file_output_stream(*params.histogramDumpFileName,
-                                  arg::truncate{true}),
-        recycling_bucket_source<std::byte>::create(),
-        // Not flushed if the acquisition is halted, so use a granularity that
-        // never leaves part of a frame buffered.
-        arg::granularity<>{sizeof(u16)});
     struct reset_event {};
     if constexpr (Cumulative) {
         return append(
@@ -82,7 +141,7 @@ auto make_full_histo_proc(ProcessingParams const &params) {
                 arg::max_per_bin<u16>{65535}, bsource,
                 select<type_list<concluding_histogram_array_event<>>>(
                     extract_bucket<concluding_histogram_array_event<>>(
-                        view_as_bytes(std::move(writer))))));
+                        view_as_bytes(std::move(downstream))))));
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
             arg::num_elements{num_pixels},
@@ -90,7 +149,7 @@ auto make_full_histo_proc(ProcessingParams const &params) {
             arg::max_per_bin<u16>{65535}, bsource,
             select<type_list<histogram_array_event<>>>(
                 extract_bucket<histogram_array_event<>>(
-                    view_as_bytes(std::move(writer)))));
+                    view_as_bytes(std::move(downstream)))));
     }
 }
 
@@ -99,7 +158,7 @@ auto make_full_histo_proc(ProcessingParams const &params) {
 // branch that gets displayed.
 template <bool Cumulative>
 auto make_live_histo_proc(ProcessingParams const &params,
-                          FrameCallback frameCallback) {
+                          FrameCallback frameCallback, std::uint32_t channel) {
     using namespace tcspc;
     auto bsource = recycling_bucket_source<u16>::create();
     // scan_histograms emits a histogram_array_event as soon as each frame's
@@ -113,7 +172,7 @@ auto make_live_histo_proc(ProcessingParams const &params,
         arg::num_elements{std::size_t(params.width * params.height)},
         arg::num_bins{std::size_t(1)}, arg::max_per_bin<u16>{65535}, bsource,
         select<type_list<histogram_array_event<>>>(
-            FrameSink(std::move(frameCallback), 0)));
+            FrameSink(std::move(frameCallback), channel)));
 }
 
 template <bool Cumulative>
@@ -136,63 +195,103 @@ auto make_processor(ProcessingParams const &params,
         pixel_stop_event,
         time_reached_event<>>;
 
+    using tc_processor = type_erased_processor<tc_event_list>;
+    std::size_t const num_detectors = params.detectors.size();
+    slot_channels const leading_channels =
+        padded_channels(params, &DetectorChannels::leadingChannel);
+    slot_channels const trailing_channels =
+        padded_channels(params, &DetectorChannels::trailingChannel);
+
+    // Each detector slot gets its own histogramming branch. Time-correlated
+    // events carry the detector's leading channel (see photon_processor
+    // below); pixel start/stop and time_reached go to every slot.
+    auto route_to_slots = [&](std::array<tc_processor, kMaxDetectors> slots) {
+        return route_homogeneous<type_list<time_correlated_detection_event<>>>(
+            slot_router(leading_channels), std::move(slots));
+    };
+
     // Single-bin "intensity" equivalent (max_bin_index=0, clamp=true forces
     // every photon into bin 0 regardless of its difftime) -- this is the
     // one actually sent live to the frame callback, since that contract
     // only supports one u16 sample per pixel (see FrameSink's comment).
     // Always built: this is the live image path.
-    auto live_pixel_chain =
-    map_to_datapoints<time_correlated_detection_event<>>(
-        difftime_data_mapper(),
-    map_to_bins(
-        linear_bin_mapper(
-            arg::offset<difftime_type>{0},
-            arg::bin_width<difftime_type>{1},
-            arg::max_bin_index<bin_index_type>{0},
-            arg::clamp{true}),
-    cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-    make_live_histo_proc<Cumulative>(params, std::move(frameCallback)))));
-
-    // The full per-pixel histogram (histogramBins bins/pixel, written to
-    // disk) is only useful when a dump file name
-    // was given. Broadcasting every time-correlated event
-    // to it as well as to live_pixel_chain roughly doubles consumer-side
-    // per-event work (map_to_datapoints -> map_to_bins ->
-    // cluster_bin_increments -> scan_histograms, all over again, plus the
-    // dump itself), for no benefit when nobody's consuming it. So it's
-    // built -- and the broadcast exists at all -- only inside this branch;
-    // otherwise, tc_downstream is just live_pixel_chain,
-    // type-erased to the same interface so both arms of the branch have a
-    // common type to hand to merge() below.
-    type_erased_processor<tc_event_list> tc_downstream =
-        [&]() -> type_erased_processor<tc_event_list> {
-        if (!params.histogramDumpFileName)
-            return type_erased_processor<tc_event_list>(
-                std::move(live_pixel_chain));
-
-        // Full per-pixel TCSPC histogram (histogramBins bins of
-        // histogramBinWidth_ps) -- debug-dumped to disk, not sent to the
-        // frame callback.
-        auto full_pixel_chain =
+    auto live_route = route_to_slots(make_slots<tc_processor>([&](std::size_t i) {
+        if (i >= num_detectors)
+            return tc_processor(sink_all());
+        return tc_processor(
         map_to_datapoints<time_correlated_detection_event<>>(
             difftime_data_mapper(),
         map_to_bins(
             linear_bin_mapper(
                 arg::offset<difftime_type>{0},
-                arg::bin_width{bin_width},
-                // linear_bin_mapper's own parameter is the index of the
-                // last bin (num_bins - 1), not a bin count -- num_bins is
-                // guaranteed >= 16 by HistogramBinsSetting's
-                // discrete-values list (never includes 0), so this can't
-                // underflow.
-                arg::max_bin_index<bin_index_type>{bin_index_type(num_bins - 1)}),
+                arg::bin_width<difftime_type>{1},
+                arg::max_bin_index<bin_index_type>{0},
+                arg::clamp{true}),
         cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-        make_full_histo_proc<Cumulative>(params))));
+        make_live_histo_proc<Cumulative>(params, frameCallback,
+                                         std::uint32_t(i))))));
+    }));
 
-        return type_erased_processor<tc_event_list>(
+    // The full per-pixel histogram (histogramBins bins/pixel, written to
+    // disk) is only useful when a dump file name
+    // was given. Broadcasting every time-correlated event
+    // to it as well as to live_route roughly doubles consumer-side
+    // per-event work (map_to_datapoints -> map_to_bins ->
+    // cluster_bin_increments -> scan_histograms, all over again, plus the
+    // dump itself), for no benefit when nobody's consuming it. So it's
+    // built -- and the broadcast exists at all -- only inside this branch;
+    // otherwise, tc_downstream is just live_route,
+    // type-erased to the same interface so both arms of the branch have a
+    // common type to hand to merge() below.
+    tc_processor tc_downstream = [&]() -> tc_processor {
+        if (!params.histogramDumpFileName)
+            return tc_processor(std::move(live_route));
+
+        // All slots write to one file. The layout is (frame, channel, y, x,
+        // bin): each slot's scan_histograms completes a frame on that frame's
+        // last pixel_stop_event, which the route passes to the slots in slot
+        // order. In Cumulative mode the concluding arrays are emitted on
+        // flush, also in slot order, giving (channel, y, x, bin).
+        auto writer_inputs = merge_n_unsorted<kMaxDetectors>(
+            write_binary_stream(
+                binary_file_output_stream(*params.histogramDumpFileName,
+                                          arg::truncate{true}),
+                recycling_bucket_source<std::byte>::create(),
+                // Not flushed if the acquisition is halted, so use a
+                // granularity that never leaves part of a frame buffered.
+                arg::granularity<>{sizeof(u16)}));
+
+        // Full per-pixel TCSPC histogram (histogramBins bins of
+        // histogramBinWidth_ps) -- debug-dumped to disk, not sent to the
+        // frame callback.
+        auto full_route = route_to_slots(make_slots<tc_processor>([&](std::size_t i) {
+            // Unused slots still forward flush, so that the writer is
+            // flushed once every slot has been.
+            if (i >= num_detectors)
+                return tc_processor(
+                    select<type_list<>>(std::move(writer_inputs[i])));
+            return tc_processor(
+            map_to_datapoints<time_correlated_detection_event<>>(
+                difftime_data_mapper(),
+            map_to_bins(
+                linear_bin_mapper(
+                    arg::offset<difftime_type>{0},
+                    arg::bin_width{bin_width},
+                    // linear_bin_mapper's own parameter is the index of the
+                    // last bin (num_bins - 1), not a bin count -- num_bins is
+                    // guaranteed >= 16 by HistogramBinsSetting's
+                    // discrete-values list (never includes 0), so this can't
+                    // underflow.
+                    arg::max_bin_index<bin_index_type>{bin_index_type(num_bins - 1)}),
+            cluster_bin_increments<pixel_start_event, pixel_stop_event>(
+            make_full_histo_proc<Cumulative>(params,
+                                             std::move(writer_inputs[i]))))));
+        }));
+
+        return tc_processor(
             broadcast<tc_event_list>(
-                std::move(full_pixel_chain),
-                std::move(live_pixel_chain)));
+                std::move(full_route),
+                std::move(live_route)));
     }();
 
     // End the acquisition after the requested number of frames. Counted here,
@@ -220,7 +319,7 @@ auto make_processor(ProcessingParams const &params,
         arg::max_buffered<>{1 << 20},
     pair_all_between(
         arg::start_channel{params.syncChannel},
-        std::array{params.photonLeadingChannel},
+        leading_channels,
         arg::time_window<abstime_type>{params.maxDiffTime_ps},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     time_correlate_at_stop(
@@ -231,15 +330,13 @@ auto make_processor(ProcessingParams const &params,
     std::move(sync_merge));
 
     auto photon_processor =
-    pair_one_between(
-        arg::start_channel{params.photonLeadingChannel},
-        std::array{params.photonTrailingChannel},
-        arg::time_window<abstime_type>{params.maxPhotonPulseWidth_ps},
+    pair_pulses<0>(leading_channels, trailing_channels,
+                   params.maxPhotonPulseWidth_ps,
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
-    // the start (photonLeadingChannel) side of the pair, not the stop
-    // (photonTrailingChannel) side -- downstream (the sync/photon
-    // pair_all_between below) matches on photonLeadingChannel, so a pulse
+    // the start (leading edge) side of the pair, not the stop (trailing
+    // edge) side -- downstream (the sync/photon pair_all_between above and
+    // the per-detector routing) matches on the leading channel, so a pulse
     // event carrying the trailing edge's channel would never correlate
     // with anything.
     time_correlate_at_midpoint<default_numeric_traits, true>(
@@ -283,12 +380,7 @@ auto make_processor(ProcessingParams const &params,
         arg::interval_threshold<abstime_type>{1 << 30}, // About 1 ms
         arg::count_threshold<>{1 << 18}, // 1/4 of merge buffer size
     route<type_list<detection_event<>>, type_list<time_reached_event<>>>(
-        channel_router(std::array{
-            std::pair{params.syncChannel, 0},
-            std::pair{params.photonLeadingChannel, 1},
-            std::pair{params.photonTrailingChannel, 1},
-            std::pair{params.lineClockChannel, 2},
-        }),
+        raw_tag_router(params, leading_channels, trailing_channels),
         std::move(sync_processor),
         std::move(photon_processor),
         std::move(pixel_marker_processor)))))));
@@ -338,6 +430,9 @@ TagPipeline
 MakeProcessingPipeline(ProcessingParams const &params,
                        FrameCallback frameCallback,
                        std::shared_ptr<tcspc::context> const &ctx) {
+    if (params.detectors.empty() || params.detectors.size() > kMaxDetectors)
+        throw std::invalid_argument("Number of detectors must be 1 to " +
+                                    std::to_string(kMaxDetectors));
     if (params.cumulative)
         return TagPipeline(
             make_processor<true>(params, std::move(frameCallback), ctx));
