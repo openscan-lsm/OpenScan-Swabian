@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace {
-// Negative photon leading edge, as with the module's default Photon Channel;
+// Negative photon leading edge, as with the module's default Detector0Input;
 // trigger levels must still land on the positive (physical) input number.
 constexpr TaggerChannels kChannels = {
     .sync = 2,

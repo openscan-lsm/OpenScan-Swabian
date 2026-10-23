@@ -30,9 +30,9 @@ void ConfigureTagger(TimeTagger *tagger, TaggerChannels const &channels,
 
     // Hardware delays are applied on board before the conditional filter, so
     // the photon delay shifts which sync edge the filter passes for each
-    // photon (see README.md, "Photon Delay (ps)"). Once a nonzero delay has
-    // been written, an all-zero configuration must be written too, since
-    // nothing restores the delays at Stop.
+    // photon (see README.md, "Detector0HardwareDelay_ns"). Once a nonzero
+    // delay has been written, an all-zero configuration must be written too,
+    // since nothing restores the delays at Stop.
     if (photonDelay_ps != 0 || hardwareDelaysApplied) {
         tagger->setDelayHardware(channels.photonLeading, photonDelay_ps);
         tagger->setDelayHardware(channels.photonTrailing, photonDelay_ps);
@@ -48,7 +48,7 @@ void ConfigureTagger(TimeTagger *tagger, TaggerChannels const &channels,
     // cost scales with the photon rate rather than the laser rate. Both photon
     // edges must trigger because the pipeline correlates the pulse midpoint,
     // which the hardware cannot see. See README.md ("Channels", "Timing") for
-    // the consequences for the Sync Delay and Max Diff Time settings.
+    // the consequences for the SyncDelay_ns and MaxDiffTime_ns settings.
     tagger->setConditionalFilter(
         {channels.photonLeading, channels.photonTrailing}, {channels.sync});
 }

@@ -48,8 +48,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
             "GetSettings");
     REQUIRE(count == 16);
 
-    SECTION("Sync Channel: default, allowed values, and round-trip") {
-        auto *s = FindSetting(settings, count, "Sync Channel");
+    SECTION("SyncInput: default, allowed values, and round-trip") {
+        auto *s = FindSetting(settings, count, "SyncInput");
         REQUIRE(s != nullptr);
         int32_t v = 0;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -74,9 +74,9 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_SetInt32Value(s, 2), "restore"); // leave as found
     }
 
-    SECTION("Photon Channel and Line Clock Channel defaults") {
-        auto *photon = FindSetting(settings, count, "Photon Channel");
-        auto *lineClock = FindSetting(settings, count, "Line Clock Channel");
+    SECTION("Detector0Input and LineClockInput defaults") {
+        auto *photon = FindSetting(settings, count, "Detector0Input");
+        auto *lineClock = FindSetting(settings, count, "LineClockInput");
         REQUIRE(photon != nullptr);
         REQUIRE(lineClock != nullptr);
 
@@ -87,8 +87,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(v == 1);
     }
 
-    SECTION("Sync Trigger Level (V): default, device range, and round-trip") {
-        auto *s = FindSetting(settings, count, "Sync Trigger Level (V)");
+    SECTION("SyncTriggerLevel_V: default, device range, and round-trip") {
+        auto *s = FindSetting(settings, count, "SyncTriggerLevel_V");
         REQUIRE(s != nullptr);
         double v = 1.0;
         CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
@@ -106,9 +106,9 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_SetFloat64Value(s, 0.0), "restore");
     }
 
-    SECTION(
-        "Photon Trigger Level (V): default, device range, and round-trip") {
-        auto *s = FindSetting(settings, count, "Photon Trigger Level (V)");
+    SECTION("Detector0TriggerLevel_V: default, device range, and "
+            "round-trip") {
+        auto *s = FindSetting(settings, count, "Detector0TriggerLevel_V");
         REQUIRE(s != nullptr);
         double v = 1.0;
         CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
@@ -125,73 +125,81 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_SetFloat64Value(s, -0.1), "restore");
     }
 
-    SECTION("Sync Delay (ps): defaults to zero and round-trips") {
-        auto *s = FindSetting(settings, count, "Sync Delay (ps)");
+    SECTION("SyncDelay_ns: default, round-trip, and rounding to the "
+            "nearest picosecond") {
+        auto *s = FindSetting(settings, count, "SyncDelay_ns");
         REQUIRE(s != nullptr);
-        int32_t v = -1;
-        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
-        CHECK(v == 0);
+        double v = 0.0;
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+        CHECK(v == -12.5);
 
-        CheckOk(OSc_Setting_SetInt32Value(s, 777), "set");
-        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
-        CHECK(v == 777);
-        CheckOk(OSc_Setting_SetInt32Value(s, 0), "restore");
+        CheckOk(OSc_Setting_SetFloat64Value(s, 0.777), "set");
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get2");
+        CHECK(v == 0.777);
+        CheckOk(OSc_Setting_SetFloat64Value(s, 1.2346), "set unrounded");
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get3");
+        CHECK(v == 1.235);
+        CheckOk(OSc_Setting_SetFloat64Value(s, -12.5), "restore");
     }
 
-    SECTION("Line Delay (ps): defaults to zero and only allows non-negative "
+    SECTION("LineDelay_ns: defaults to zero and only allows non-negative "
             "values") {
-        auto *s = FindSetting(settings, count, "Line Delay (ps)");
+        auto *s = FindSetting(settings, count, "LineDelay_ns");
         REQUIRE(s != nullptr);
-        int32_t v = -1;
-        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
-        CHECK(v == 0);
+        double v = -1.0;
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+        CHECK(v == 0.0);
 
-        int32_t min = -1, max = 0;
-        CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
-        CHECK(min == 0);
+        double min = -1.0, max = 0.0;
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(s, &min, &max), "range");
+        CHECK(min == 0.0);
     }
 
-    SECTION("Photon Delay (ps): defaults to zero, round-trips, and reports "
-            "the device's hardware delay range") {
-        auto *s = FindSetting(settings, count, "Photon Delay (ps)");
+    SECTION("Detector0HardwareDelay_ns: defaults to zero, round-trips, and "
+            "reports the device's hardware delay range") {
+        auto *s = FindSetting(settings, count, "Detector0HardwareDelay_ns");
         REQUIRE(s != nullptr);
-        int32_t v = -1;
-        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
-        CHECK(v == 0);
+        double v = -1.0;
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+        CHECK(v == 0.0);
 
         // The fake's getDelayHardwareRange().
-        int32_t min = 0, max = 0;
-        CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
-        CHECK(min == -2'500'000);
-        CHECK(max == 2'500'000);
+        double min = 0.0, max = 0.0;
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(s, &min, &max), "range");
+        CHECK(min == -2500.0);
+        CHECK(max == 2500.0);
 
-        CheckOk(OSc_Setting_SetInt32Value(s, -4000), "set");
-        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
-        CHECK(v == -4000);
-        CheckOk(OSc_Setting_SetInt32Value(s, 0), "restore");
+        CheckOk(OSc_Setting_SetFloat64Value(s, -4.0), "set");
+        CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get2");
+        CHECK(v == -4.0);
+        CheckOk(OSc_Setting_SetFloat64Value(s, 0.0), "restore");
     }
 
-    SECTION("Max Photon Pulse Width (ps) and Max Diff Time (ps) defaults") {
+    SECTION("MaxPhotonPulseWidth_ns and MaxDiffTime_ns defaults") {
         auto *pulseWidth =
-            FindSetting(settings, count, "Max Photon Pulse Width (ps)");
-        auto *diffTime = FindSetting(settings, count, "Max Diff Time (ps)");
+            FindSetting(settings, count, "MaxPhotonPulseWidth_ns");
+        auto *diffTime = FindSetting(settings, count, "MaxDiffTime_ns");
         REQUIRE(pulseWidth != nullptr);
         REQUIRE(diffTime != nullptr);
 
-        int32_t v = 0;
-        CheckOk(OSc_Setting_GetInt32Value(pulseWidth, &v), "get pulse width");
-        CHECK(v == 100'000);
-        CheckOk(OSc_Setting_GetInt32Value(diffTime, &v), "get diff time");
-        CHECK(v == 12'500);
+        double v = 0.0;
+        CheckOk(OSc_Setting_GetFloat64Value(pulseWidth, &v),
+                "get pulse width");
+        CHECK(v == 100.0);
+        CheckOk(OSc_Setting_GetFloat64Value(diffTime, &v), "get diff time");
+        CHECK(v == 12.5);
 
-        int32_t min = -1, max = 0;
-        CheckOk(OSc_Setting_GetInt32ContinuousRange(pulseWidth, &min, &max),
+        double min = -1.0, max = 0.0;
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(pulseWidth, &min, &max),
                 "range pulse width");
-        CHECK(min == 1); // must stay positive
+        CHECK(min == 0.001); // must stay positive
+        CheckOk(OSc_Setting_GetFloat64ContinuousRange(diffTime, &min, &max),
+                "range diff time");
+        CHECK(min == 0.001);
     }
 
-    SECTION("Histogram Bins: default and discrete value set") {
-        auto *s = FindSetting(settings, count, "Histogram Bins");
+    SECTION("HistogramBins: default and discrete value set") {
+        auto *s = FindSetting(settings, count, "HistogramBins");
         REQUIRE(s != nullptr);
         int32_t v = 0;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -207,8 +215,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CHECK(got == expected);
     }
 
-    SECTION("Histogram Bin Width (ps): default, range, and round-trip") {
-        auto *s = FindSetting(settings, count, "Histogram Bin Width (ps)");
+    SECTION("HistogramBinWidth_ps: default, range, and round-trip") {
+        auto *s = FindSetting(settings, count, "HistogramBinWidth_ps");
         REQUIRE(s != nullptr);
         int32_t v = 0;
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
@@ -227,7 +235,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
 
     SECTION("boolean settings default to false and round-trip") {
         for (std::string const &name :
-             {"Save Histograms", "Cumulative", "Save Raw Data"}) {
+             {"SaveHistograms", "Cumulative", "SaveRawData"}) {
             auto *s = FindSetting(settings, count, name);
             REQUIRE(s != nullptr);
             bool v = true;
@@ -241,8 +249,8 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         }
     }
 
-    SECTION("File Name Prefix: default and round-trip") {
-        auto *s = FindSetting(settings, count, "File Name Prefix");
+    SECTION("FileNamePrefix: default and round-trip") {
+        auto *s = FindSetting(settings, count, "FileNamePrefix");
         REQUIRE(s != nullptr);
         char buf[OSc_MAX_STR_SIZE];
         CheckOk(OSc_Setting_GetStringValue(s, buf), "get");

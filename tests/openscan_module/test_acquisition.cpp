@@ -10,7 +10,7 @@
 
 // Only for the Tag struct and the fake's channel/period constants, to decode
 // the raw dump byte-for-byte in the same layout Processing.cpp wrote it and
-// to set Sync Delay (ps) to the fake's sync period -- this test otherwise
+// to set SyncDelay_ns to the fake's sync period -- this test otherwise
 // only drives the module through the public OpenScanLib API, like every
 // other test in this directory.
 #include <TimeTagger.h>
@@ -86,19 +86,17 @@ AcquisitionSetup RunAcquisition(
     CheckOk(
         OSc_Device_GetSettings(fx.detector, &run.settings, &run.settingCount),
         "GetSettings");
+    CheckOk(OSc_Setting_SetInt32Value(
+                FindSetting(run.settings, run.settingCount, "SyncInput"), 2),
+            "set SyncInput");
     CheckOk(
         OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Sync Channel"), 2),
-        "set Sync Channel");
+            FindSetting(run.settings, run.settingCount, "Detector0Input"), -3),
+        "set Detector0Input");
     CheckOk(
         OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Photon Channel"), -3),
-        "set Photon Channel");
-    CheckOk(
-        OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Line Clock Channel"),
-            1),
-        "set Line Clock Channel");
+            FindSetting(run.settings, run.settingCount, "LineClockInput"), 1),
+        "set LineClockInput");
     CheckOk(OSc_Setting_SetBoolValue(
                 FindSetting(run.settings, run.settingCount, "Cumulative"),
                 cumulative),
@@ -106,10 +104,10 @@ AcquisitionSetup RunAcquisition(
     // As in real use: the module's conditional filter passes the sync
     // FOLLOWING each photon, so shifting the sync back by one period makes
     // the difftime "time since the preceding sync" (see README.md).
-    CheckOk(OSc_Setting_SetInt32Value(
-                FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"),
-                static_cast<int32_t>(-SIMULATED_PIXEL_PERIOD_PS)),
-            "set Sync Delay (ps)");
+    CheckOk(OSc_Setting_SetFloat64Value(
+                FindSetting(run.settings, run.settingCount, "SyncDelay_ns"),
+                -SIMULATED_PIXEL_PERIOD_PS / 1000.0),
+            "set SyncDelay_ns");
     if (additionalSetup)
         additionalSetup(run.settings, run.settingCount);
 
@@ -156,10 +154,10 @@ void RestoreSharedSettings(AcquisitionSetup const &run) {
         OSc_Setting_SetBoolValue(
             FindSetting(run.settings, run.settingCount, "Cumulative"), false),
         "restore Cumulative");
-    CheckOk(
-        OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"), 0),
-        "restore Sync Delay (ps)");
+    CheckOk(OSc_Setting_SetFloat64Value(
+                FindSetting(run.settings, run.settingCount, "SyncDelay_ns"),
+                -12.5),
+            "restore SyncDelay_ns");
 }
 
 } // namespace
@@ -237,7 +235,7 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
     RestoreSharedSettings(run);
 }
 
-TEST_CASE("Save Raw Data writes every registered channel (both photon and "
+TEST_CASE("SaveRawData writes every registered channel (both photon and "
           "line clock edges, but only the configured sync edge) to a .raw "
           "dump, with the conditional filter applied to the sync",
           "[acquisition][slow]") {
@@ -260,15 +258,14 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     AcquisitionSetup run = RunAcquisition(
         fx, 1, false, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
+            CheckOk(OSc_Setting_SetStringValue(
+                        FindSetting(settings, settingCount, "FileNamePrefix"),
+                        prefix.c_str()),
+                    "set FileNamePrefix");
             CheckOk(
-                OSc_Setting_SetStringValue(
-                    FindSetting(settings, settingCount, "File Name Prefix"),
-                    prefix.c_str()),
-                "set File Name Prefix");
-            CheckOk(OSc_Setting_SetBoolValue(
-                        FindSetting(settings, settingCount, "Save Raw Data"),
-                        true),
-                    "set Save Raw Data");
+                OSc_Setting_SetBoolValue(
+                    FindSetting(settings, settingCount, "SaveRawData"), true),
+                "set SaveRawData");
         });
 
     // Reaching the requested frame count only calls finish_running()
@@ -339,21 +336,20 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     // device_test_support.hpp's Environment comment) -- otherwise these
     // stick around for every later test case in this binary,
     // test_device_settings.cpp's default-value checks included.
-    CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Save Raw Data"),
-                false),
-            "restore Save Raw Data");
     CheckOk(
-        OSc_Setting_SetStringValue(
-            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
-            "OpenScan-Swabian"),
-        "restore File Name Prefix");
+        OSc_Setting_SetBoolValue(
+            FindSetting(run.settings, run.settingCount, "SaveRawData"), false),
+        "restore SaveRawData");
+    CheckOk(OSc_Setting_SetStringValue(
+                FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
+                "OpenScan-Swabian"),
+            "restore FileNamePrefix");
     RestoreSharedSettings(run);
 }
 
 namespace {
 
-// Runs a kNumFrames acquisition with Save Histograms enabled and returns the
+// Runs a kNumFrames acquisition with SaveHistograms enabled and returns the
 // contents of the resulting .hist file, together with the expected number of
 // u16 elements per histogram array (height * width * bins).
 struct HistogramFile {
@@ -380,23 +376,22 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
     AcquisitionSetup run = RunAcquisition(
         fx, kHistNumFrames, cumulative, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
-            CheckOk(
-                OSc_Setting_SetStringValue(
-                    FindSetting(settings, settingCount, "File Name Prefix"),
-                    prefix.c_str()),
-                "set File Name Prefix");
+            CheckOk(OSc_Setting_SetStringValue(
+                        FindSetting(settings, settingCount, "FileNamePrefix"),
+                        prefix.c_str()),
+                    "set FileNamePrefix");
             CheckOk(OSc_Setting_SetBoolValue(
-                        FindSetting(settings, settingCount, "Save Histograms"),
+                        FindSetting(settings, settingCount, "SaveHistograms"),
                         true),
-                    "set Save Histograms");
+                    "set SaveHistograms");
             CheckOk(OSc_Setting_GetInt32Value(
-                        FindSetting(settings, settingCount, "Histogram Bins"),
+                        FindSetting(settings, settingCount, "HistogramBins"),
                         &bins),
-                    "get Histogram Bins");
+                    "get HistogramBins");
         });
 
-    // The file stays open until the acquisition is stopped; see the Save Raw
-    // Data test above.
+    // The file stays open until the acquisition is stopped; see the
+    // SaveRawData test above.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
 
     OSc_Acquisition_Destroy(run.acq);
@@ -420,14 +415,13 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
     // Restore what this test mutated on the shared device (see
     // device_test_support.hpp's Environment comment).
     CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Save Histograms"),
+                FindSetting(run.settings, run.settingCount, "SaveHistograms"),
                 false),
-            "restore Save Histograms");
-    CheckOk(
-        OSc_Setting_SetStringValue(
-            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
-            "OpenScan-Swabian"),
-        "restore File Name Prefix");
+            "restore SaveHistograms");
+    CheckOk(OSc_Setting_SetStringValue(
+                FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
+                "OpenScan-Swabian"),
+            "restore FileNamePrefix");
     RestoreSharedSettings(run);
 
     return result;
@@ -435,7 +429,7 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
 
 } // namespace
 
-TEST_CASE("Save Histograms writes every frame's histogram array to a .hist "
+TEST_CASE("SaveHistograms writes every frame's histogram array to a .hist "
           "file",
           "[acquisition][slow]") {
     HistogramFile const hist = AcquireHistogramFile(false);
@@ -444,7 +438,7 @@ TEST_CASE("Save Histograms writes every frame's histogram array to a .hist "
                           std::uint64_t(0)) > 0);
 }
 
-TEST_CASE("Save Histograms in Cumulative mode writes a single histogram "
+TEST_CASE("SaveHistograms in Cumulative mode writes a single histogram "
           "array, the sum of all frames, to a .hist file",
           "[acquisition][slow]") {
     HistogramFile const hist = AcquireHistogramFile(true);

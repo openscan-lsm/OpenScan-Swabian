@@ -39,7 +39,7 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .rawDataFileName = std::nullopt,
     };
 
-    // File names follow OpenScan-BH_SPC's scheme (File Name Prefix setting
+    // File names follow OpenScan-BH_SPC's scheme (FileNamePrefix setting
     // + "_NNNN" index shared by all output files); see UniqueFileName.h.
     if (data->saveHistograms || data->saveRawData) {
         std::optional<std::string> const uniqueName =

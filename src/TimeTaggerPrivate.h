@@ -21,7 +21,7 @@ struct TimeTagger_PrivateData {
     double syncTriggerLevel_V = 0.0;
     double photonTriggerLevel_V = -0.1;
 
-    int32_t syncDelay_ps = 0;
+    int32_t syncDelay_ps = -12'500;
     int32_t lineDelay_ps = 0;
     int32_t photonDelay_ps = 0;
     // Whether a hardware delay has been written to the currently open device;
