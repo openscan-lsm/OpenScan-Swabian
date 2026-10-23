@@ -1,6 +1,6 @@
 // Tests that the fake's synthetic event generation (IteratorBase::PumpLoop)
-// produces "reasonable" data: the right shape of data on the three
-// hardcoded special channels (line clock, sync, gated photon noise), and
+// produces "reasonable" data: the right shape of data on the hardcoded
+// special channels (line clock, sync, gated photon noise), and
 // nothing at all on any other channel -- see TimeTagger.h's file comment
 // for the design this pins down.
 //
@@ -11,12 +11,15 @@
 // flake under normal scheduling jitter.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
 #include "collecting_iterator.hpp"
 
 #include <TimeTagger.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -80,8 +83,23 @@ std::vector<Tag> Collect(std::vector<channel_t> const &channels,
     return Collect(tagger, channels, duration);
 }
 
-// True if two SYNC_CHANNEL tags occur with no photon tag (either edge)
-// between them.
+// Either edge of any photon channel.
+bool IsPhotonEdge(channel_t channel) {
+    return std::find(PHOTON_CHANNELS.begin(), PHOTON_CHANNELS.end(),
+                     std::abs(channel)) != PHOTON_CHANNELS.end();
+}
+
+std::vector<channel_t> AllPhotonEdges() {
+    std::vector<channel_t> edges;
+    for (channel_t const ch : PHOTON_CHANNELS) {
+        edges.push_back(ch);
+        edges.push_back(-ch);
+    }
+    return edges;
+}
+
+// True if two SYNC_CHANNEL tags occur with no photon tag (either edge, any
+// photon channel) between them.
 bool HasConsecutiveSyncs(std::vector<Tag> const &tags) {
     bool syncPending = false;
     for (auto const &t : tags) {
@@ -89,8 +107,7 @@ bool HasConsecutiveSyncs(std::vector<Tag> const &tags) {
             if (syncPending)
                 return true;
             syncPending = true;
-        } else if (t.channel == PHOTON_CHANNEL ||
-                   t.channel == -PHOTON_CHANNEL) {
+        } else if (IsPhotonEdge(t.channel)) {
             syncPending = false;
         }
     }
@@ -160,25 +177,39 @@ TEST_CASE("SYNC_CHANNEL emits alternating edges with a positive pulse "
     }
 }
 
-TEST_CASE("PHOTON_CHANNEL emits alternating edges forming negative pulses "
-          "with a positive pulse width",
+TEST_CASE("Each photon channel emits alternating edges forming negative "
+          "pulses with a positive pulse width",
           "[data]") {
-    auto const tags = Collect({PHOTON_CHANNEL, -PHOTON_CHANNEL},
+    channel_t const photonChannel = GENERATE(from_range(PHOTON_CHANNELS));
+    auto const tags = Collect({photonChannel, -photonChannel},
                               std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 1);
 
     // Ensure we start with a falling (leading) edge and alternate from there
-    REQUIRE(tags.front().channel == -PHOTON_CHANNEL);
+    REQUIRE(tags.front().channel == -photonChannel);
     for (size_t i = 0; i < tags.size(); ++i) {
-        REQUIRE((tags[i].channel == PHOTON_CHANNEL ||
-                 tags[i].channel == -PHOTON_CHANNEL));
+        REQUIRE((tags[i].channel == photonChannel ||
+                 tags[i].channel == -photonChannel));
         if (i > 0)
             CHECK(tags[i].channel == -1 * tags[i - 1].channel); // alternation
     }
 
     for (size_t i = 0; i < tags.size(); ++i) {
-        if (tags[i].channel == PHOTON_CHANNEL)
+        if (tags[i].channel == photonChannel)
             CHECK(tags[i].time > tags[i - 1].time); // positive pulse width
+    }
+}
+
+TEST_CASE("All photon channels produce events when registered together",
+          "[data]") {
+    auto const tags = Collect(AllPhotonEdges(), std::chrono::milliseconds(50));
+    for (channel_t const ch : PHOTON_CHANNELS) {
+        for (channel_t const edge : {ch, -ch}) {
+            INFO("channel " << edge);
+            CHECK(std::count_if(tags.begin(), tags.end(), [&](Tag const &t) {
+                      return t.channel == edge;
+                  }) > 10);
+        }
     }
 }
 
@@ -187,9 +218,10 @@ TEST_CASE("PHOTON_CHANNEL emits alternating edges forming negative pulses "
 TEST_CASE("Every photon detection follows, and is close to, the most "
           "recent sync pulse",
           "[data]") {
-    // -PHOTON_CHANNEL is the leading (falling) edge of the negative pulse.
-    auto const tags = Collect({SYNC_CHANNEL, -PHOTON_CHANNEL},
-                              std::chrono::milliseconds(50));
+    channel_t const photonChannel = GENERATE(from_range(PHOTON_CHANNELS));
+    // -photonChannel is the leading (falling) edge of the negative pulse.
+    auto const tags =
+        Collect({SYNC_CHANNEL, -photonChannel}, std::chrono::milliseconds(50));
     REQUIRE(tags.size() > 0);
 
     // The current implementation of the fake_timetagger generates photons
@@ -205,7 +237,7 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
 
     std::optional<timestamp_t> last_sync_time;
     for (auto const &t : tags) {
-        REQUIRE((t.channel == SYNC_CHANNEL || t.channel == -PHOTON_CHANNEL));
+        REQUIRE((t.channel == SYNC_CHANNEL || t.channel == -photonChannel));
         if (t.channel == SYNC_CHANNEL) {
             last_sync_time = t.time;
             continue;
@@ -224,18 +256,19 @@ TEST_CASE("Every photon detection follows, and is close to, the most "
 TEST_CASE("The conditional filter passes only the first sync after each "
           "photon edge",
           "[data][filter]") {
-    std::vector<channel_t> const channels = {SYNC_CHANNEL, PHOTON_CHANNEL,
-                                             -PHOTON_CHANNEL};
+    std::vector<channel_t> const photonEdges = AllPhotonEdges();
+    std::vector<channel_t> channels = photonEdges;
+    channels.push_back(SYNC_CHANNEL);
 
-    // Control: the mean of one photon per sync period leaves a period empty
-    // with probability ~e^-1, so consecutive syncs are common.
+    // Control: the mean of one photon per sync period per photon channel
+    // leaves a period empty with probability ~e^-2, so consecutive syncs are
+    // common.
     auto const unfiltered = Collect(channels, std::chrono::milliseconds(50));
     REQUIRE(unfiltered.size() > 100);
     CHECK(HasConsecutiveSyncs(unfiltered));
 
     TimeTaggerBase tagger;
-    tagger.setConditionalFilter({PHOTON_CHANNEL, -PHOTON_CHANNEL},
-                                {SYNC_CHANNEL});
+    tagger.setConditionalFilter(photonEdges, {SYNC_CHANNEL});
     auto const filtered =
         Collect(tagger, channels, std::chrono::milliseconds(50));
     REQUIRE(filtered.size() > 100);
@@ -247,8 +280,7 @@ TEST_CASE("The conditional filter passes only the first sync after each "
             continue;
         sawSync = true;
         REQUIRE(i > 0);
-        CHECK((filtered[i - 1].channel == PHOTON_CHANNEL ||
-               filtered[i - 1].channel == -PHOTON_CHANNEL));
+        CHECK(IsPhotonEdge(filtered[i - 1].channel));
         CHECK(filtered[i].time >= filtered[i - 1].time);
     }
     CHECK(sawSync);
@@ -259,9 +291,10 @@ TEST_CASE("Batches are contiguous and every tag satisfies begin_time <= "
           "[data]") {
     TimeTaggerBase tagger;
     BatchCollectingIterator iter(&tagger);
-    for (channel_t const ch :
-         {LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL, SYNC_CHANNEL, -SYNC_CHANNEL,
-          PHOTON_CHANNEL, -PHOTON_CHANNEL})
+    for (channel_t const ch : {LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL,
+                               SYNC_CHANNEL, -SYNC_CHANNEL})
+        iter.registerChannel(ch);
+    for (channel_t const ch : AllPhotonEdges())
         iter.registerChannel(ch);
     iter.start();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -284,10 +317,11 @@ TEST_CASE("Batches are contiguous and every tag satisfies begin_time <= "
 TEST_CASE("Tags across simultaneously-registered channels are delivered in "
           "non-decreasing time order",
           "[data]") {
-    auto const tags =
-        Collect({LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL, SYNC_CHANNEL,
-                 -SYNC_CHANNEL, PHOTON_CHANNEL, -PHOTON_CHANNEL, 99},
-                std::chrono::milliseconds(30));
+    std::vector<channel_t> channels = {LINE_CLOCK_CHANNEL, -LINE_CLOCK_CHANNEL,
+                                       SYNC_CHANNEL, -SYNC_CHANNEL, 99};
+    for (channel_t const ch : AllPhotonEdges())
+        channels.push_back(ch);
+    auto const tags = Collect(channels, std::chrono::milliseconds(30));
     REQUIRE(tags.size() > 10);
     for (size_t i = 1; i < tags.size(); ++i)
         CHECK(tags[i].time >= tags[i - 1].time);

@@ -7,21 +7,25 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 // Only for the Tag struct and the fake's channel/period constants, to decode
 // the raw dump byte-for-byte in the same layout Processing.cpp wrote it and
-// to set Sync Delay (ps) to the fake's sync period -- this test otherwise
+// to set SyncDelay_ns to the fake's sync period -- this test otherwise
 // only drives the module through the public OpenScanLib API, like every
 // other test in this directory.
 #include <TimeTagger.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <numeric>
+#include <string>
 #include <vector>
 
 using namespace test_support;
@@ -36,10 +40,9 @@ namespace {
 // every acquisition in this file uses this fixed resolution.
 constexpr uint32_t kResolution = 512;
 
-// Retains each captured frame. Assumes each is the same size.
+// Retains each captured frame, by channel. Assumes each is the same size.
 struct FrameCapture {
-    std::vector<std::vector<std::uint16_t>> frames;
-    uint32_t channel = 0xFFFFFFFF;
+    std::map<uint32_t, std::vector<std::vector<std::uint16_t>>> frames;
     uint32_t width = 0;
     uint32_t height = 0;
 };
@@ -47,11 +50,36 @@ struct FrameCapture {
 bool OnFrame(OSc_Acquisition *, uint32_t channel, void *pixelData,
              void *data) {
     auto *capture = static_cast<FrameCapture *>(data);
-    capture->channel = channel;
     auto const *src = static_cast<std::uint16_t const *>(pixelData);
-    capture->frames.emplace_back(
+    capture->frames[channel].emplace_back(
         src, src + static_cast<size_t>(capture->width) * capture->height);
     return true;
+}
+
+double Mean(std::vector<std::uint16_t> const &px) {
+    return std::accumulate(px.begin(), px.end(), 0.0) /
+           static_cast<double>(px.size());
+}
+
+void SetBool(OSc_Setting **settings, size_t count, std::string const &name,
+             bool value) {
+    CheckOk(
+        OSc_Setting_SetBoolValue(FindSetting(settings, count, name), value),
+        "set " + name);
+}
+
+void SetInt32(OSc_Setting **settings, size_t count, std::string const &name,
+              int32_t value) {
+    CheckOk(
+        OSc_Setting_SetInt32Value(FindSetting(settings, count, name), value),
+        "set " + name);
+}
+
+// Restores the detector settings that tests in this file may change.
+void RestoreDetectorSettings(OSc_Setting **settings, size_t count) {
+    SetBool(settings, count, "EnableDetector0", true);
+    SetBool(settings, count, "EnableDetector1", false);
+    SetInt32(settings, count, "Detector1Input", -4);
 }
 
 // Everything a test needs to inspect or clean up after RunAcquisition().
@@ -71,14 +99,14 @@ struct AcquisitionSetup {
     uint32_t height = 0;
 };
 
-// Sets up and runs a kResolution x kResolution @ 1MHz OpenScan acquisition
-// of numberOfFrames frames, using the Swabian Time Tagger as the detector
-// and the fake clock/scanner device as the clock/scanner.
+// Sets up (without arming) a kResolution x kResolution @ 1MHz OpenScan
+// acquisition of numberOfFrames frames, using the Swabian Time Tagger as the
+// detector and the fake clock/scanner device as the clock/scanner.
 //
 // Caller owns cleanup: destroy the returned acq and tmpl when done (via
 // OSc_Acquisition_Stop() first if the pipeline needs to be flushed), and
 // call RestoreSharedSettings() to undo the settings changed here.
-AcquisitionSetup RunAcquisition(
+AcquisitionSetup PrepareAcquisition(
     LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
     OSc_FrameCallback callback, void *data,
     std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
@@ -86,19 +114,19 @@ AcquisitionSetup RunAcquisition(
     CheckOk(
         OSc_Device_GetSettings(fx.detector, &run.settings, &run.settingCount),
         "GetSettings");
+    CheckOk(OSc_Setting_SetInt32Value(
+                FindSetting(run.settings, run.settingCount, "SyncInput"), 2),
+            "set SyncInput");
     CheckOk(
         OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Sync Channel"), 2),
-        "set Sync Channel");
+            FindSetting(run.settings, run.settingCount, "Detector0Input"), -3),
+        "set Detector0Input");
+    SetBool(run.settings, run.settingCount, "EnableDetector0", true);
+    SetBool(run.settings, run.settingCount, "EnableDetector1", false);
     CheckOk(
         OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Photon Channel"), -3),
-        "set Photon Channel");
-    CheckOk(
-        OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Line Clock Channel"),
-            1),
-        "set Line Clock Channel");
+            FindSetting(run.settings, run.settingCount, "LineClockInput"), 1),
+        "set LineClockInput");
     CheckOk(OSc_Setting_SetBoolValue(
                 FindSetting(run.settings, run.settingCount, "Cumulative"),
                 cumulative),
@@ -106,10 +134,10 @@ AcquisitionSetup RunAcquisition(
     // As in real use: the module's conditional filter passes the sync
     // FOLLOWING each photon, so shifting the sync back by one period makes
     // the difftime "time since the preceding sync" (see README.md).
-    CheckOk(OSc_Setting_SetInt32Value(
-                FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"),
-                static_cast<int32_t>(-SIMULATED_PIXEL_PERIOD_PS)),
-            "set Sync Delay (ps)");
+    CheckOk(OSc_Setting_SetFloat64Value(
+                FindSetting(run.settings, run.settingCount, "SyncDelay_ns"),
+                -SIMULATED_PIXEL_PERIOD_PS / 1000.0),
+            "set SyncDelay_ns");
     if (additionalSetup)
         additionalSetup(run.settings, run.settingCount);
 
@@ -141,10 +169,19 @@ AcquisitionSetup RunAcquisition(
     CheckOk(OSc_Acquisition_SetFrameCallback(run.acq, callback),
             "SetFrameCallback");
 
+    return run;
+}
+
+// PrepareAcquisition(), then arms, starts, and waits for the acquisition.
+AcquisitionSetup RunAcquisition(
+    LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
+    OSc_FrameCallback callback, void *data,
+    std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
+    AcquisitionSetup run = PrepareAcquisition(fx, numberOfFrames, cumulative,
+                                              callback, data, additionalSetup);
     CheckOk(OSc_Acquisition_Arm(run.acq), "Acquisition_Arm");
     CheckOk(OSc_Acquisition_Start(run.acq), "Acquisition_Start");
     CheckOk(OSc_Acquisition_Wait(run.acq), "Acquisition_Wait");
-
     return run;
 }
 
@@ -156,10 +193,10 @@ void RestoreSharedSettings(AcquisitionSetup const &run) {
         OSc_Setting_SetBoolValue(
             FindSetting(run.settings, run.settingCount, "Cumulative"), false),
         "restore Cumulative");
-    CheckOk(
-        OSc_Setting_SetInt32Value(
-            FindSetting(run.settings, run.settingCount, "Sync Delay (ps)"), 0),
-        "restore Sync Delay (ps)");
+    CheckOk(OSc_Setting_SetFloat64Value(
+                FindSetting(run.settings, run.settingCount, "SyncDelay_ns"),
+                -12.5),
+            "restore SyncDelay_ns");
 }
 
 } // namespace
@@ -175,19 +212,18 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
 
     REQUIRE(run.width == kResolution);
     REQUIRE(run.height == kResolution);
-    REQUIRE(capture.frames.size() == 1);
-    CHECK(capture.channel == 0);
-
     // Assert only one channel in the output
+    REQUIRE(capture.frames.size() == 1);
+    REQUIRE(capture.frames.contains(0));
+    REQUIRE(capture.frames.at(0).size() == 1);
     uint32_t numChannels = 0;
     CheckOk(OSc_Acquisition_GetNumberOfChannels(run.acq, &numChannels),
             "GetNumberOfChannels");
     REQUIRE(numChannels == 1);
 
     // Assert noise-like qualities on the image
-    auto const &px = capture.frames.front();
-    double const mean = std::accumulate(px.begin(), px.end(), 0.0) /
-                        static_cast<double>(px.size());
+    auto const &px = capture.frames.at(0).front();
+    double const mean = Mean(px);
     CHECK(mean > 0);
 
     double const variance = std::accumulate(px.begin(), px.end(), 0.0,
@@ -219,14 +255,16 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
 
     REQUIRE(run.width == kResolution);
     REQUIRE(run.height == kResolution);
-    REQUIRE(capture.frames.size() == kNumFrames);
+    REQUIRE(capture.frames.size() == 1);
+    auto const &frames = capture.frames.at(0);
+    REQUIRE(frames.size() == kNumFrames);
 
     // Cumulative mode never resets or subtracts, so every pixel can only
     // grow or stay the same from one delivered frame to the next -- i.e.
     // frame N is frame N-1 plus that frame's own new (random) counts.
-    for (size_t f = 1; f < capture.frames.size(); ++f) {
-        auto const &prev = capture.frames[f - 1];
-        auto const &cur = capture.frames[f];
+    for (size_t f = 1; f < frames.size(); ++f) {
+        auto const &prev = frames[f - 1];
+        auto const &cur = frames[f];
         REQUIRE(prev.size() == cur.size());
         CHECK(std::equal(prev.begin(), prev.end(), cur.begin(),
                          std::less_equal<>()));
@@ -237,7 +275,7 @@ TEST_CASE("Cumulative mode delivers one image per frame, each the running "
     RestoreSharedSettings(run);
 }
 
-TEST_CASE("Save Raw Data writes every registered channel (both photon and "
+TEST_CASE("SaveRawData writes every registered channel (both photon and "
           "line clock edges, but only the configured sync edge) to a .raw "
           "dump, with the conditional filter applied to the sync",
           "[acquisition][slow]") {
@@ -260,15 +298,14 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     AcquisitionSetup run = RunAcquisition(
         fx, 1, false, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
+            CheckOk(OSc_Setting_SetStringValue(
+                        FindSetting(settings, settingCount, "FileNamePrefix"),
+                        prefix.c_str()),
+                    "set FileNamePrefix");
             CheckOk(
-                OSc_Setting_SetStringValue(
-                    FindSetting(settings, settingCount, "File Name Prefix"),
-                    prefix.c_str()),
-                "set File Name Prefix");
-            CheckOk(OSc_Setting_SetBoolValue(
-                        FindSetting(settings, settingCount, "Save Raw Data"),
-                        true),
-                    "set Save Raw Data");
+                OSc_Setting_SetBoolValue(
+                    FindSetting(settings, settingCount, "SaveRawData"), true),
+                "set SaveRawData");
         });
 
     // Reaching the requested frame count only calls finish_running()
@@ -317,10 +354,10 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
             syncPending = true;
         } else if (tag.channel == -SYNC_CHANNEL)
             sawFallingSync = true;
-        if (tag.channel == PHOTON_CHANNEL) {
+        if (tag.channel == PHOTON_CHANNELS[0]) {
             sawRisingPhoton = true;
             syncPending = false;
-        } else if (tag.channel == -PHOTON_CHANNEL) {
+        } else if (tag.channel == -PHOTON_CHANNELS[0]) {
             sawFallingPhoton = true;
             syncPending = false;
         }
@@ -339,21 +376,20 @@ TEST_CASE("Save Raw Data writes every registered channel (both photon and "
     // device_test_support.hpp's Environment comment) -- otherwise these
     // stick around for every later test case in this binary,
     // test_device_settings.cpp's default-value checks included.
-    CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Save Raw Data"),
-                false),
-            "restore Save Raw Data");
     CheckOk(
-        OSc_Setting_SetStringValue(
-            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
-            "OpenScan-Swabian"),
-        "restore File Name Prefix");
+        OSc_Setting_SetBoolValue(
+            FindSetting(run.settings, run.settingCount, "SaveRawData"), false),
+        "restore SaveRawData");
+    CheckOk(OSc_Setting_SetStringValue(
+                FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
+                "OpenScan-Swabian"),
+            "restore FileNamePrefix");
     RestoreSharedSettings(run);
 }
 
 namespace {
 
-// Runs a kNumFrames acquisition with Save Histograms enabled and returns the
+// Runs a kNumFrames acquisition with SaveHistograms enabled and returns the
 // contents of the resulting .hist file, together with the expected number of
 // u16 elements per histogram array (height * width * bins).
 struct HistogramFile {
@@ -363,7 +399,9 @@ struct HistogramFile {
 
 constexpr uint32_t kHistNumFrames = 2;
 
-HistogramFile AcquireHistogramFile(bool cumulative) {
+// With twoDetectors, Detector1 (input -4) is enabled in addition to
+// Detector0.
+HistogramFile AcquireHistogramFile(bool cumulative, bool twoDetectors) {
     LSMFixture fx;
 
     std::filesystem::path const scratch_dir =
@@ -380,23 +418,23 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
     AcquisitionSetup run = RunAcquisition(
         fx, kHistNumFrames, cumulative, OnFrame, &capture,
         [&](OSc_Setting **settings, size_t settingCount) {
-            CheckOk(
-                OSc_Setting_SetStringValue(
-                    FindSetting(settings, settingCount, "File Name Prefix"),
-                    prefix.c_str()),
-                "set File Name Prefix");
+            CheckOk(OSc_Setting_SetStringValue(
+                        FindSetting(settings, settingCount, "FileNamePrefix"),
+                        prefix.c_str()),
+                    "set FileNamePrefix");
             CheckOk(OSc_Setting_SetBoolValue(
-                        FindSetting(settings, settingCount, "Save Histograms"),
+                        FindSetting(settings, settingCount, "SaveHistograms"),
                         true),
-                    "set Save Histograms");
+                    "set SaveHistograms");
             CheckOk(OSc_Setting_GetInt32Value(
-                        FindSetting(settings, settingCount, "Histogram Bins"),
+                        FindSetting(settings, settingCount, "HistogramBins"),
                         &bins),
-                    "get Histogram Bins");
+                    "get HistogramBins");
+            SetBool(settings, settingCount, "EnableDetector1", twoDetectors);
         });
 
-    // The file stays open until the acquisition is stopped; see the Save Raw
-    // Data test above.
+    // The file stays open until the acquisition is stopped; see the
+    // SaveRawData test above.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
 
     OSc_Acquisition_Destroy(run.acq);
@@ -420,35 +458,118 @@ HistogramFile AcquireHistogramFile(bool cumulative) {
     // Restore what this test mutated on the shared device (see
     // device_test_support.hpp's Environment comment).
     CheckOk(OSc_Setting_SetBoolValue(
-                FindSetting(run.settings, run.settingCount, "Save Histograms"),
+                FindSetting(run.settings, run.settingCount, "SaveHistograms"),
                 false),
-            "restore Save Histograms");
-    CheckOk(
-        OSc_Setting_SetStringValue(
-            FindSetting(run.settings, run.settingCount, "File Name Prefix"),
-            "OpenScan-Swabian"),
-        "restore File Name Prefix");
+            "restore SaveHistograms");
+    CheckOk(OSc_Setting_SetStringValue(
+                FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
+                "OpenScan-Swabian"),
+            "restore FileNamePrefix");
+    RestoreDetectorSettings(run.settings, run.settingCount);
     RestoreSharedSettings(run);
 
     return result;
 }
 
-} // namespace
-
-TEST_CASE("Save Histograms writes every frame's histogram array to a .hist "
-          "file",
-          "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(false);
-    CHECK(hist.data.size() == kHistNumFrames * hist.elementsPerArray);
-    CHECK(std::accumulate(hist.data.begin(), hist.data.end(),
-                          std::uint64_t(0)) > 0);
+std::uint64_t Sum(std::vector<std::uint16_t>::const_iterator begin,
+                  std::vector<std::uint16_t>::const_iterator end) {
+    return std::accumulate(begin, end, std::uint64_t(0));
 }
 
-TEST_CASE("Save Histograms in Cumulative mode writes a single histogram "
+} // namespace
+
+TEST_CASE("SaveHistograms writes every frame's histogram array to a .hist "
+          "file",
+          "[acquisition][slow]") {
+    HistogramFile const hist = AcquireHistogramFile(false, false);
+    CHECK(hist.data.size() == kHistNumFrames * hist.elementsPerArray);
+    CHECK(Sum(hist.data.begin(), hist.data.end()) > 0);
+}
+
+TEST_CASE("SaveHistograms in Cumulative mode writes a single histogram "
           "array, the sum of all frames, to a .hist file",
           "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(true);
+    HistogramFile const hist = AcquireHistogramFile(true, false);
     CHECK(hist.data.size() == hist.elementsPerArray);
-    CHECK(std::accumulate(hist.data.begin(), hist.data.end(),
-                          std::uint64_t(0)) > 0);
+    CHECK(Sum(hist.data.begin(), hist.data.end()) > 0);
+}
+
+TEST_CASE("SaveHistograms with two detectors writes a histogram array per "
+          "detector",
+          "[acquisition][slow]") {
+    bool const cumulative = GENERATE(false, true);
+    INFO("cumulative = " << cumulative);
+    HistogramFile const hist = AcquireHistogramFile(cumulative, true);
+    size_t const numArrays = (cumulative ? 1 : kHistNumFrames) * 2;
+    REQUIRE(hist.data.size() == numArrays * hist.elementsPerArray);
+    for (size_t i = 0; i < numArrays; ++i) {
+        INFO("array " << i);
+        auto const begin =
+            hist.data.begin() + std::ptrdiff_t(i * hist.elementsPerArray);
+        CHECK(Sum(begin, begin + std::ptrdiff_t(hist.elementsPerArray)) > 0);
+    }
+}
+
+TEST_CASE("two enabled detectors deliver a frame on each of two channels",
+          "[acquisition][slow]") {
+    LSMFixture fx;
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+    AcquisitionSetup run = RunAcquisition(
+        fx, 1, false, OnFrame, &capture,
+        [&](OSc_Setting **settings, size_t settingCount) {
+            SetBool(settings, settingCount, "EnableDetector1", true);
+            SetInt32(settings, settingCount, "Detector1Input", -4);
+        });
+
+    uint32_t numChannels = 0;
+    CheckOk(OSc_Acquisition_GetNumberOfChannels(run.acq, &numChannels),
+            "GetNumberOfChannels");
+    CHECK(numChannels == 2);
+    CHECK(capture.frames.size() == 2);
+    for (uint32_t ch = 0; ch < 2; ++ch) {
+        INFO("channel " << ch);
+        REQUIRE(capture.frames.contains(ch));
+        REQUIRE(capture.frames.at(ch).size() == 1);
+        CHECK(Mean(capture.frames.at(ch).front()) > 0);
+    }
+
+    OSc_Acquisition_Destroy(run.acq);
+    OSc_AcqTemplate_Destroy(run.tmpl);
+    RestoreDetectorSettings(run.settings, run.settingCount);
+    RestoreSharedSettings(run);
+}
+
+TEST_CASE("Arm fails with an invalid detector configuration",
+          "[acquisition]") {
+    LSMFixture fx;
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+
+    std::function<void(OSc_Setting **, size_t)> setup;
+    SECTION("no detector enabled") {
+        setup = [](OSc_Setting **settings, size_t settingCount) {
+            SetBool(settings, settingCount, "EnableDetector0", false);
+        };
+    }
+    SECTION("detector on the sync input") {
+        setup = [](OSc_Setting **settings, size_t settingCount) {
+            SetBool(settings, settingCount, "EnableDetector1", true);
+            SetInt32(settings, settingCount, "Detector1Input", 2);
+        };
+    }
+
+    AcquisitionSetup run =
+        PrepareAcquisition(fx, 1, false, OnFrame, &capture, setup);
+    OSc_RichError *err = OSc_Acquisition_Arm(run.acq);
+    CHECK(err != nullptr);
+    if (err)
+        OSc_Error_Destroy(err);
+
+    OSc_Acquisition_Destroy(run.acq);
+    OSc_AcqTemplate_Destroy(run.tmpl);
+    RestoreDetectorSettings(run.settings, run.settingCount);
+    RestoreSharedSettings(run);
 }

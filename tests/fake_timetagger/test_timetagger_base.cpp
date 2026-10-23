@@ -47,11 +47,12 @@ TEST_CASE("channel list reports both edges of each simulated input and "
     TimeTagger tagger;
     auto all = tagger.getChannelList();
     std::sort(all.begin(), all.end());
-    CHECK(all == std::vector<channel_t>{-4, -3, -2, -1, 1, 2, 3, 4});
+    CHECK(all == std::vector<channel_t>{-8, -7, -6, -5, -4, -3, -2, -1, 1, 2,
+                                        3, 4, 5, 6, 7, 8});
     CHECK(tagger.getChannelList(ChannelEdge::Rising) ==
-          std::vector<channel_t>{1, 2, 3, 4});
+          std::vector<channel_t>{1, 2, 3, 4, 5, 6, 7, 8});
     CHECK(tagger.getChannelList(ChannelEdge::Falling) ==
-          std::vector<channel_t>{-1, -2, -3, -4});
+          std::vector<channel_t>{-1, -2, -3, -4, -5, -6, -7, -8});
     CHECK(tagger.getChannelList(ChannelEdge::HighResAll).empty());
 }
 

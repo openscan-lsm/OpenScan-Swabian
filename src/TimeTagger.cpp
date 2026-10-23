@@ -2,6 +2,8 @@
 #include <TimeTagger.h>
 #include <TimeTaggerPrivate.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -157,10 +159,14 @@ static OScDev_Error TimeTagger_GetPixelRates(OScDev_Device *,
     return OScDev_OK;
 }
 
-static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *,
+static OScDev_Error TimeTagger_GetNumberOfChannels(OScDev_Device *device,
                                                    uint32_t *numChannels) {
-    // TODO Support multiple channels
-    *numChannels = 1;
+    auto const &detectors = GetData(device)->detectors;
+    auto const enabled =
+        std::count_if(detectors.begin(), detectors.end(),
+                      [](DetectorSettings const &d) { return d.enabled; });
+    // Never 0, which hosts may not handle; Arm reports the error instead.
+    *numChannels = static_cast<uint32_t>(std::max<std::ptrdiff_t>(enabled, 1));
     return OScDev_OK;
 }
 
@@ -194,9 +200,10 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
 
     try {
         TimeTagger_PrivateData *data = GetData(device);
-        ConfigureTagger(data->tagger.get(), MakeTaggerChannels(data),
-                        data->syncTriggerLevel_V, data->photonTriggerLevel_V,
-                        data->photonDelay_ps, data->hardwareDelaysApplied);
+        TaggerConfig const config = MakeTaggerConfig(data);
+        ValidateTaggerConfig(config);
+        ConfigureTagger(data->tagger.get(), config,
+                        data->hardwareDelaysApplied);
         data->run = std::make_unique<AcquisitionRun>(device, acq);
     } catch (const std::exception &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));

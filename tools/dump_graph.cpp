@@ -1,5 +1,6 @@
 #include "Processing.h"
 
+#include <charconv>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -10,12 +11,14 @@ namespace {
 
 constexpr char kUsage[] =
     "Usage: dump_graph [--cumulative] [--histogram-dump] [--raw-data]\n"
+    "                  [--detectors N]\n"
     "\n"
     "Print the libtcspc processing graph in Graphviz dot format.\n"
     "\n"
     "  --cumulative      cumulative (rather than per-frame) histograms\n"
     "  --histogram-dump  include the histogram dump file output\n"
-    "  --raw-data        include the raw data file output\n";
+    "  --raw-data        include the raw data file output\n"
+    "  --detectors N     number of detectors, 1-4 (default 1)\n";
 
 } // namespace
 
@@ -25,10 +28,9 @@ int main(int argc, char *argv[]) {
         .height = 4,
         .pixelTime_ps = 1000,
         .numFrames = 1,
-        .lineClockChannel = 3,
-        .syncChannel = 1,
-        .photonLeadingChannel = 2,
-        .photonTrailingChannel = -2,
+        .lineClockChannel = 1,
+        .syncChannel = 2,
+        .detectors = {},
         .syncDelay_ps = 0,
         .lineDelay_ps = 0,
         .maxPhotonPulseWidth_ps = 1000,
@@ -39,6 +41,7 @@ int main(int argc, char *argv[]) {
         .histogramDumpFileName = {},
         .rawDataFileName = {},
     };
+    int numDetectors = 1;
 
     // The file outputs open their files on construction; NUL discards.
     for (int i = 1; i < argc; ++i) {
@@ -49,6 +52,16 @@ int main(int argc, char *argv[]) {
             params.histogramDumpFileName = "NUL";
         } else if (arg == "--raw-data") {
             params.rawDataFileName = "NUL";
+        } else if (arg == "--detectors" && i + 1 < argc) {
+            std::string_view const value = argv[++i];
+            auto const [end, ec] = std::from_chars(
+                value.data(), value.data() + value.size(), numDetectors);
+            if (ec != std::errc() || end != value.data() + value.size() ||
+                numDetectors < 1 || numDetectors > int(kMaxDetectors)) {
+                std::cerr << "Invalid number of detectors: " << value << "\n\n"
+                          << kUsage;
+                return 2;
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << kUsage;
             return 0;
@@ -57,6 +70,12 @@ int main(int argc, char *argv[]) {
             return 2;
         }
     }
+
+    for (int i = 0; i < numDetectors; ++i)
+        params.detectors.push_back({
+            .leadingChannel = -(3 + i),
+            .trailingChannel = 3 + i,
+        });
 
     try {
         auto const pipeline = MakeProcessingPipeline(

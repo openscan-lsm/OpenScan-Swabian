@@ -2,18 +2,27 @@
 
 #include <libtcspc/tcspc.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 using TagSpan = std::span<tcspc::swabian_tag_event const>;
 using TagPipeline = tcspc::type_erased_processor<
     tcspc::type_list<TagSpan, tcspc::time_reached_event<>>>;
 
 inline constexpr char kTagBufferTrackerName[] = "tag_buffer";
+
+inline constexpr std::size_t kMaxDetectors = 4;
+
+struct DetectorChannels {
+    std::int32_t leadingChannel;
+    std::int32_t trailingChannel;
+};
 
 struct ProcessingParams {
     std::uint32_t width;
@@ -23,8 +32,9 @@ struct ProcessingParams {
 
     std::int32_t lineClockChannel;
     std::int32_t syncChannel;
-    std::int32_t photonLeadingChannel;
-    std::int32_t photonTrailingChannel;
+    // 1 to kMaxDetectors entries. Index i is the frame callback channel and
+    // the channel index in the histogram file.
+    std::vector<DetectorChannels> detectors;
 
     std::int32_t syncDelay_ps;
     std::int32_t lineDelay_ps;
@@ -45,6 +55,7 @@ struct ProcessingParams {
 using FrameCallback =
     std::function<void(std::uint32_t channel, std::span<tcspc::u16 const>)>;
 
+// Throws std::invalid_argument if the number of detectors is out of range.
 TagPipeline MakeProcessingPipeline(ProcessingParams const &params,
                                    FrameCallback frameCallback,
                                    std::shared_ptr<tcspc::context> const &ctx);

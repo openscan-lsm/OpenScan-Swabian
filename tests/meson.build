@@ -11,6 +11,13 @@ dump_graph_variants = {
     'cumulative': ['--cumulative'],
     'all_outputs': ['--histogram-dump', '--raw-data'],
     'cumulative_all_outputs': ['--cumulative', '--histogram-dump', '--raw-data'],
+    'four_detectors': ['--detectors', '4'],
+    'four_detectors_cumulative_all_outputs': [
+        '--detectors', '4',
+        '--cumulative',
+        '--histogram-dump',
+        '--raw-data',
+    ],
 }
 foreach name, args : dump_graph_variants
     test('dump_graph_' + name, dump_graph_exe, args: args)
