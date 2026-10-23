@@ -279,13 +279,13 @@ sample per pixel.
 ## Simulate mode details
 
 When built with `-Dsimulate=true`, `src/fake_timetagger/` synthesizes
-activity on three fixed channels so the pipeline has realistic-looking data
-to process without hardware: a line clock, a sync channel, and gated Poisson
-photon noise correlated to the sync channel. The simulated photons are
-negative pulses (falling edge first), matching the default Detector0Input of
-`-3`. These are fixed, hardcoded
-constants (`LineClockChannel`, `SyncChannel`, `PhotonChannel`, and their
-rates, in
+activity on fixed inputs so the pipeline has realistic-looking data to
+process without hardware: a line clock on input 1, a sync on input 2, and
+independent gated Poisson photon noise, correlated to the sync, on inputs 3
+and 4. The simulated photons are negative pulses (falling edge first),
+matching the default Detector0Input of `-3`. The simulated device has 8
+inputs; inputs 5–8 produce no events. These are fixed, hardcoded constants
+(`LINE_CLOCK_CHANNEL`, `SYNC_CHANNEL`, `PHOTON_CHANNELS`, and their rates, in
 `src/fake_timetagger/include/TimeTagger.h`) rather than derived from the
 current OpenScan acquisition's settings — the fake has no access to
 OpenScan-specific concepts like pixel rate or ROI, by design (see that

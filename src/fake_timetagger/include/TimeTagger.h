@@ -20,9 +20,11 @@
 // or pattern, since no such API exists on the real TimeTaggerBase either.
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -45,8 +47,8 @@ constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 // be synchronized with these values to ensure proper operation.
 constexpr channel_t LINE_CLOCK_CHANNEL = 1;
 constexpr channel_t SYNC_CHANNEL = 2;
-constexpr channel_t PHOTON_CHANNEL = 3;
-constexpr channel_t NUM_SIMULATED_INPUTS = 4;
+constexpr std::array<channel_t, 2> PHOTON_CHANNELS = {3, 4};
+constexpr channel_t NUM_SIMULATED_INPUTS = 8;
 
 constexpr timestamp_t MAX_SIMULATED_STEP_PS = 10'000'000;
 
@@ -352,8 +354,8 @@ inline bool operator==(Tag const &a, Tag const &b) {
 }
 
 // Fake of IteratorBase. Drives a background thread that synthesizes events
-// -- the hardcoded line-clock/sync/gated-photon behavior for the three
-// special channels (see the file comment above), and nothing at all for
+// -- the hardcoded line-clock/sync/gated-photon behavior for the special
+// channels (see the constants above), and nothing at all for
 // any other registered channel, since this fake only models the channels
 // this project actually wires up -- applies the tagger's conditional
 // filter, and delivers them via next_impl(). This is enough to exercise a
@@ -530,11 +532,14 @@ class IteratorBase {
         // trigger event has opened and no filtered event has yet closed.
         // Persists across batches, like the hardware's.
         std::set<channel_t> openFilterGates;
-        std::optional<double> nextPhotonCandidatePs;
+        // Per photon channel, indexed like PHOTON_CHANNELS.
+        std::array<std::optional<double>, PHOTON_CHANNELS.size()>
+            nextPhotonCandidatePs;
         // Trailing edge of a photon pulse whose leading edge was delivered in
         // an earlier batch but which itself fell at or beyond that batch's
         // endTime (every tag must satisfy tag.time < end_time).
-        std::optional<double> pendingPhotonTrailingPs;
+        std::array<std::optional<double>, PHOTON_CHANNELS.size()>
+            pendingPhotonTrailingPs;
 
         while (running_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -559,20 +564,23 @@ class IteratorBase {
 
             std::vector<Tag> batch;
 
-            bool const photonPosRegistered =
-                std::find(registeredChannels_.begin(),
-                          registeredChannels_.end(),
-                          PHOTON_CHANNEL) != registeredChannels_.end();
-            bool const photonNegRegistered =
-                std::find(registeredChannels_.begin(),
-                          registeredChannels_.end(),
-                          -PHOTON_CHANNEL) != registeredChannels_.end();
-            if (photonPosRegistered || photonNegRegistered) {
+            for (std::size_t k = 0; k < PHOTON_CHANNELS.size(); ++k) {
+                channel_t const photonChannel = PHOTON_CHANNELS[k];
+                bool const photonPosRegistered =
+                    std::find(registeredChannels_.begin(),
+                              registeredChannels_.end(),
+                              photonChannel) != registeredChannels_.end();
+                bool const photonNegRegistered =
+                    std::find(registeredChannels_.begin(),
+                              registeredChannels_.end(),
+                              -photonChannel) != registeredChannels_.end();
+                if (!photonPosRegistered && !photonNegRegistered)
+                    continue;
                 // Gated Poisson photon noise correlated to the simulated
-                // sync channel (see the sync/photon comment above). Pulses
+                // sync channel, independently per photon channel. Pulses
                 // are negative, like a typical detector/preamp output: the
-                // leading edge is falling (-PHOTON_CHANNEL), the trailing
-                // edge rising (PHOTON_CHANNEL). Both edges are generated
+                // leading edge is falling (-photonChannel), the trailing
+                // edge rising (photonChannel). Both edges are generated
                 // together here, from one shared draw sequence, so
                 // pair_one_between finds a matching pair for every
                 // simulated photon instead of two independently drifting
@@ -595,16 +603,19 @@ class IteratorBase {
                 auto const drawPositivePs = [&] {
                     return std::max(1.0, gateDist(rng) * 1e12);
                 };
-                if (!nextPhotonCandidatePs)
-                    nextPhotonCandidatePs = drawPositivePs();
-                if (pendingPhotonTrailingPs &&
-                    static_cast<timestamp_t>(*pendingPhotonTrailingPs) <
-                        endTime) {
+                std::optional<double> &nextCandidatePs =
+                    nextPhotonCandidatePs[k];
+                std::optional<double> &pendingTrailingPs =
+                    pendingPhotonTrailingPs[k];
+                if (!nextCandidatePs)
+                    nextCandidatePs = drawPositivePs();
+                if (pendingTrailingPs &&
+                    static_cast<timestamp_t>(*pendingTrailingPs) < endTime) {
                     if (photonPosRegistered)
                         batch.emplace_back(
-                            static_cast<timestamp_t>(*pendingPhotonTrailingPs),
-                            PHOTON_CHANNEL);
-                    pendingPhotonTrailingPs.reset();
+                            static_cast<timestamp_t>(*pendingTrailingPs),
+                            photonChannel);
+                    pendingTrailingPs.reset();
                 }
                 for (;;) {
                     // A stop request (running_ flipped false by the
@@ -617,7 +628,7 @@ class IteratorBase {
                     // nobody will ever consume.
                     if (!running_)
                         break;
-                    double &t = *nextPhotonCandidatePs;
+                    double &t = *nextCandidatePs;
                     // Compare truncated times so that no tag equals endTime
                     // (the SDK contract is begin_time <= tag.time <
                     // end_time). Also stops generation while a trailing edge
@@ -634,7 +645,7 @@ class IteratorBase {
                         static_cast<double>(SIMULATED_PHOTON_GATE_WIDTH_PS)) {
                         if (photonNegRegistered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
-                                               -PHOTON_CHANNEL);
+                                               -photonChannel);
                         double const trailingPs =
                             t + static_cast<double>(
                                     SIMULATED_PHOTON_PULSE_WIDTH_PS);
@@ -642,9 +653,9 @@ class IteratorBase {
                             if (photonPosRegistered)
                                 batch.emplace_back(
                                     static_cast<timestamp_t>(trailingPs),
-                                    PHOTON_CHANNEL);
+                                    photonChannel);
                         } else {
-                            pendingPhotonTrailingPs = trailingPs;
+                            pendingTrailingPs = trailingPs;
                         }
                         // Schedule the next candidate from this pulse's
                         // TRAILING edge, not its leading edge -- otherwise a
@@ -688,7 +699,8 @@ class IteratorBase {
                 // See the same check in the gated-photon loop above.
                 if (!running_)
                     break;
-                if (channel == PHOTON_CHANNEL || channel == -PHOTON_CHANNEL)
+                if (std::find(PHOTON_CHANNELS.begin(), PHOTON_CHANNELS.end(),
+                              std::abs(channel)) != PHOTON_CHANNELS.end())
                     continue; // handled above, as a correlated gated pair
 
                 // Hardcoded simulated line-clock/sync signals (see the

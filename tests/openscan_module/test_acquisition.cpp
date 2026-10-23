@@ -314,10 +314,10 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
             syncPending = true;
         } else if (tag.channel == -SYNC_CHANNEL)
             sawFallingSync = true;
-        if (tag.channel == PHOTON_CHANNEL) {
+        if (tag.channel == PHOTON_CHANNELS[0]) {
             sawRisingPhoton = true;
             syncPending = false;
-        } else if (tag.channel == -PHOTON_CHANNEL) {
+        } else if (tag.channel == -PHOTON_CHANNELS[0]) {
             sawFallingPhoton = true;
             syncPending = false;
         }
