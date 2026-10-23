@@ -41,7 +41,7 @@ struct ProcessingParams {
     std::int32_t maxPhotonPulseWidth_ps;
     std::int32_t maxDiffTime_ps;
 
-    bool cumulative;
+    bool intensityImagesAreCumulative;
     std::int32_t histogramBins;
     std::int32_t histogramBinWidth_ps;
 

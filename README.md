@@ -95,10 +95,10 @@ meson selects, based on the `simulate` option.
 ### Processing graph
 
 The build also produces `dump_graph.exe`, which prints the processing graph
-in Graphviz dot format. The graph's shape depends on the "cumulative" and
-file output settings, selected with `--cumulative`, `--histogram-dump`, and
-`--raw-data`, and on the number of detectors, selected with `--detectors N`
-(1–4, default 1):
+in Graphviz dot format. The graph's shape depends on the cumulative
+intensity and file output settings, selected with `--cumulative-intensity`,
+`--histogram-dump`, and `--raw-data`, and on the number of detectors,
+selected with `--detectors N` (1–4, default 1):
 
 ```
 builddir\dump_graph.exe --histogram-dump | dot -Tsvg -o graph.svg
@@ -273,20 +273,19 @@ The following are shared by all detectors:
   > `HistogramBinWidth_ps × HistogramBins` exceeds **MaxDiffTime_ns**,
   > the trailing bins stay empty. With the defaults (50 ps × 256 = 12.8 ns ≥
   > 12.5 ns) nothing is dropped.
-- **Cumulative** (default `false`) — if enabled, the per-pixel histogram
-  accumulates across the whole acquisition instead of resetting every frame.
 - **SaveHistograms** (default `false`) — when enabled, the full per-pixel
   histogram (HistogramBins bins/pixel) of every enabled detector is
-  additionally computed and written to `<prefix>_NNNN.hist` (see
-  **FileNamePrefix**), for offline inspection. The file is raw native-endian
-  `uint16` with shape (frame, channel, y, x, bin), or (channel, y, x, bin)
-  when Cumulative (written once, at the end of the acquisition); `channel`
-  is the OpenScan channel index (see [Detectors](#detectors)). This is off by
-  default because computing and dumping it roughly doubles per-event
+  additionally computed, accumulated over the whole acquisition, and written
+  to `<prefix>_NNNN.hist` (see **FileNamePrefix**), for offline inspection.
+  The file is raw native-endian `uint16` with shape (channel, y, x, bin),
+  written once, at the end of the acquisition; `channel` is the OpenScan
+  channel index (see [Detectors](#detectors)). Nothing is written if the
+  acquisition is stopped before the requested number of frames is reached.
+  This is off by default because computing it roughly doubles per-event
   processing cost and writes a large file
-  (`channels * width * height * HistogramBins * 2` bytes per frame) — leave
-  it off for normal/live acquisitions and enable it only when you need to
-  inspect the underlying histogram data.
+  (`channels * width * height * HistogramBins * 2` bytes) — leave it off for
+  normal/live acquisitions and enable it only when you need to inspect the
+  underlying histogram data.
 
 ### Live image
 
@@ -295,6 +294,11 @@ total photon count per pixel (summed across all histogram bins, independent
 of HistogramBins) is sent to OpenScanLib/Micro-Manager as the
 live/displayed image — the frame callback contract only supports one 16-bit
 sample per pixel.
+
+- **IntensityImagesAreCumulative** (default `false`) — if enabled, each
+  delivered image is the running sum of every frame so far instead of that
+  frame alone. Does not affect the saved histogram (see **SaveHistograms**),
+  which is always the acquisition total.
 
 ### File output
 

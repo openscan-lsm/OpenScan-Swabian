@@ -122,41 +122,31 @@ auto pair_pulses(slot_channels const &leading, slot_channels const &trailing,
 
 // Full per-pixel histogram (histogramBins bins/pixel) -- written to disk as
 // raw u16, not sent to the frame callback (which has no way to receive a
-// per-pixel histogram cube -- see FrameSink's comment above). Emits the
-// array's bytes to downstream.
-template <bool Cumulative, typename Downstream>
+// per-pixel histogram cube -- see FrameSink's comment above). Accumulates
+// over the whole acquisition and emits the array's bytes to downstream once,
+// on flush.
+template <typename Downstream>
 auto make_full_histo_proc(ProcessingParams const &params,
                           Downstream downstream) {
     using namespace tcspc;
     auto const num_pixels = std::size_t(params.width * params.height);
     auto bsource = recycling_bucket_source<u16>::create();
     struct reset_event {};
-    if constexpr (Cumulative) {
-        return append(
-            reset_event{}, // Reset before flush to get concluding array.
-            scan_histograms<histogram_policy::emit_concluding_events,
-                            reset_event>(
-                arg::num_elements{num_pixels},
-                arg::num_bins{std::size_t(params.histogramBins)},
-                arg::max_per_bin<u16>{65535}, bsource,
-                select<type_list<concluding_histogram_array_event<>>>(
-                    extract_bucket<concluding_histogram_array_event<>>(
-                        view_as_bytes(std::move(downstream))))));
-    } else {
-        return scan_histograms<histogram_policy::clear_every_scan>(
+    return append(
+        reset_event{}, // Reset before flush to get concluding array.
+        scan_histograms<histogram_policy::emit_concluding_events, reset_event>(
             arg::num_elements{num_pixels},
             arg::num_bins{std::size_t(params.histogramBins)},
             arg::max_per_bin<u16>{65535}, bsource,
-            select<type_list<histogram_array_event<>>>(
-                extract_bucket<histogram_array_event<>>(
-                    view_as_bytes(std::move(downstream)))));
-    }
+            select<type_list<concluding_histogram_array_event<>>>(
+                extract_bucket<concluding_histogram_array_event<>>(
+                    view_as_bytes(std::move(downstream))))));
 }
 
 // Single-bin ("intensity") histogram -- one count per pixel, timing
 // ignored, sent live to the frame callback via FrameSink. This is the
 // branch that gets displayed.
-template <bool Cumulative>
+template <bool CumulativeIntensity>
 auto make_live_histo_proc(ProcessingParams const &params,
                           FrameCallback frameCallback, std::uint32_t channel) {
     using namespace tcspc;
@@ -166,8 +156,8 @@ auto make_live_histo_proc(ProcessingParams const &params,
     // non-cumulative frames; the default policy leaves prior counts in place
     // for cumulative frames.
     constexpr histogram_policy policy =
-        Cumulative ? histogram_policy::default_policy
-                   : histogram_policy::clear_every_scan;
+        CumulativeIntensity ? histogram_policy::default_policy
+                            : histogram_policy::clear_every_scan;
     return scan_histograms<policy>(
         arg::num_elements{std::size_t(params.width * params.height)},
         arg::num_bins{std::size_t(1)}, arg::max_per_bin<u16>{65535}, bsource,
@@ -175,7 +165,7 @@ auto make_live_histo_proc(ProcessingParams const &params,
             FrameSink(std::move(frameCallback), channel)));
 }
 
-template <bool Cumulative>
+template <bool CumulativeIntensity>
 auto make_processor(ProcessingParams const &params,
                     FrameCallback frameCallback,
                     std::shared_ptr<tcspc::context> const &ctx) {
@@ -228,8 +218,8 @@ auto make_processor(ProcessingParams const &params,
                 arg::max_bin_index<bin_index_type>{0},
                 arg::clamp{true}),
         cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-        make_live_histo_proc<Cumulative>(params, frameCallback,
-                                         std::uint32_t(i))))));
+        make_live_histo_proc<CumulativeIntensity>(params, frameCallback,
+                                                  std::uint32_t(i))))));
     }));
 
     // The full per-pixel histogram (histogramBins bins/pixel, written to
@@ -247,18 +237,14 @@ auto make_processor(ProcessingParams const &params,
         if (!params.histogramDumpFileName)
             return tc_processor(std::move(live_route));
 
-        // All slots write to one file. The layout is (frame, channel, y, x,
-        // bin): each slot's scan_histograms completes a frame on that frame's
-        // last pixel_stop_event, which the route passes to the slots in slot
-        // order. In Cumulative mode the concluding arrays are emitted on
-        // flush, also in slot order, giving (channel, y, x, bin).
+        // All slots write to one file. Each slot's concluding array is
+        // emitted on flush, which the route passes to the slots in slot
+        // order, giving (channel, y, x, bin).
         auto writer_inputs = merge_n_unsorted<kMaxDetectors>(
             write_binary_stream(
                 binary_file_output_stream(*params.histogramDumpFileName,
                                           arg::truncate{true}),
                 recycling_bucket_source<std::byte>::create(),
-                // Not flushed if the acquisition is halted, so use a
-                // granularity that never leaves part of a frame buffered.
                 arg::granularity<>{sizeof(u16)}));
 
         // Full per-pixel TCSPC histogram (histogramBins bins of
@@ -284,8 +270,7 @@ auto make_processor(ProcessingParams const &params,
                     // underflow.
                     arg::max_bin_index<bin_index_type>{bin_index_type(num_bins - 1)}),
             cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-            make_full_histo_proc<Cumulative>(params,
-                                             std::move(writer_inputs[i]))))));
+            make_full_histo_proc(params, std::move(writer_inputs[i]))))));
         }));
 
         return tc_processor(
@@ -433,7 +418,7 @@ MakeProcessingPipeline(ProcessingParams const &params,
     if (params.detectors.empty() || params.detectors.size() > kMaxDetectors)
         throw std::invalid_argument("Number of detectors must be 1 to " +
                                     std::to_string(kMaxDetectors));
-    if (params.cumulative)
+    if (params.intensityImagesAreCumulative)
         return TagPipeline(
             make_processor<true>(params, std::move(frameCallback), ctx));
     return TagPipeline(

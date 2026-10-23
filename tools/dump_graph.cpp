@@ -10,15 +10,16 @@
 namespace {
 
 constexpr char kUsage[] =
-    "Usage: dump_graph [--cumulative] [--histogram-dump] [--raw-data]\n"
-    "                  [--detectors N]\n"
+    "Usage: dump_graph [--cumulative-intensity] [--histogram-dump]\n"
+    "                  [--raw-data] [--detectors N]\n"
     "\n"
     "Print the libtcspc processing graph in Graphviz dot format.\n"
     "\n"
-    "  --cumulative      cumulative (rather than per-frame) histograms\n"
-    "  --histogram-dump  include the histogram dump file output\n"
-    "  --raw-data        include the raw data file output\n"
-    "  --detectors N     number of detectors, 1-4 (default 1)\n";
+    "  --cumulative-intensity  cumulative (rather than per-frame) intensity\n"
+    "                          images\n"
+    "  --histogram-dump        include the histogram dump file output\n"
+    "  --raw-data              include the raw data file output\n"
+    "  --detectors N           number of detectors, 1-4 (default 1)\n";
 
 } // namespace
 
@@ -35,7 +36,7 @@ int main(int argc, char *argv[]) {
         .lineDelay_ps = 0,
         .maxPhotonPulseWidth_ps = 1000,
         .maxDiffTime_ps = 12500,
-        .cumulative = false,
+        .intensityImagesAreCumulative = false,
         .histogramBins = 256,
         .histogramBinWidth_ps = 50,
         .histogramDumpFileName = {},
@@ -46,8 +47,8 @@ int main(int argc, char *argv[]) {
     // The file outputs open their files on construction; NUL discards.
     for (int i = 1; i < argc; ++i) {
         std::string_view const arg = argv[i];
-        if (arg == "--cumulative") {
-            params.cumulative = true;
+        if (arg == "--cumulative-intensity") {
+            params.intensityImagesAreCumulative = true;
         } else if (arg == "--histogram-dump") {
             params.histogramDumpFileName = "NUL";
         } else if (arg == "--raw-data") {
