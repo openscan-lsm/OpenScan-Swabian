@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,118 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 16);
+    REQUIRE(count == 29);
+
+    SECTION("the expected settings are present, without duplicates") {
+        std::set<std::string> const expected = {
+            "SyncInput",
+            "LineClockInput",
+            "SyncTriggerLevel_V",
+            "SyncDelay_ns",
+            "LineDelay_ns",
+            "EnableDetector0",
+            "Detector0Input",
+            "Detector0TriggerLevel_V",
+            "Detector0HardwareDelay_ns",
+            "EnableDetector1",
+            "Detector1Input",
+            "Detector1TriggerLevel_V",
+            "Detector1HardwareDelay_ns",
+            "EnableDetector2",
+            "Detector2Input",
+            "Detector2TriggerLevel_V",
+            "Detector2HardwareDelay_ns",
+            "EnableDetector3",
+            "Detector3Input",
+            "Detector3TriggerLevel_V",
+            "Detector3HardwareDelay_ns",
+            "MaxPhotonPulseWidth_ns",
+            "MaxDiffTime_ns",
+            "SaveHistograms",
+            "HistogramBins",
+            "HistogramBinWidth_ps",
+            "Cumulative",
+            "SaveRawData",
+            "FileNamePrefix",
+        };
+        std::set<std::string> got;
+        for (size_t i = 0; i < count; ++i) {
+            char buf[OSc_MAX_STR_SIZE];
+            CheckOk(OSc_Setting_GetName(settings[i], buf), "GetName");
+            got.insert(buf);
+        }
+        CHECK(got.size() == count);
+        CHECK(got == expected);
+    }
+
+    SECTION("detector defaults: only Detector0 enabled, inputs -3 to -6") {
+        for (int d = 0; d < 4; ++d) {
+            std::string const name = "Detector" + std::to_string(d);
+            INFO(name);
+            auto *enable = FindSetting(settings, count, "Enable" + name);
+            auto *input = FindSetting(settings, count, name + "Input");
+            auto *level =
+                FindSetting(settings, count, name + "TriggerLevel_V");
+            auto *delay =
+                FindSetting(settings, count, name + "HardwareDelay_ns");
+            REQUIRE(enable != nullptr);
+            REQUIRE(input != nullptr);
+            REQUIRE(level != nullptr);
+            REQUIRE(delay != nullptr);
+
+            bool b = false;
+            CheckOk(OSc_Setting_GetBoolValue(enable, &b), "get enable");
+            CHECK(b == (d == 0));
+            int32_t i = 0;
+            CheckOk(OSc_Setting_GetInt32Value(input, &i), "get input");
+            CHECK(i == -(3 + d));
+            double v = 0.0;
+            CheckOk(OSc_Setting_GetFloat64Value(level, &v), "get level");
+            CHECK(v == -0.1);
+            CheckOk(OSc_Setting_GetFloat64Value(delay, &v), "get delay");
+            CHECK(v == 0.0);
+        }
+    }
+
+    SECTION("Detector1 settings round-trip independently of Detector0") {
+        auto *enable1 = FindSetting(settings, count, "EnableDetector1");
+        auto *input1 = FindSetting(settings, count, "Detector1Input");
+        auto *level1 = FindSetting(settings, count, "Detector1TriggerLevel_V");
+        auto *delay1 =
+            FindSetting(settings, count, "Detector1HardwareDelay_ns");
+        auto *input0 = FindSetting(settings, count, "Detector0Input");
+        auto *level0 = FindSetting(settings, count, "Detector0TriggerLevel_V");
+        auto *delay0 =
+            FindSetting(settings, count, "Detector0HardwareDelay_ns");
+
+        CheckOk(OSc_Setting_SetBoolValue(enable1, true), "set enable");
+        CheckOk(OSc_Setting_SetInt32Value(input1, 7), "set input");
+        CheckOk(OSc_Setting_SetFloat64Value(level1, 0.2), "set level");
+        CheckOk(OSc_Setting_SetFloat64Value(delay1, 3.5), "set delay");
+
+        bool b = false;
+        CheckOk(OSc_Setting_GetBoolValue(enable1, &b), "get enable");
+        CHECK(b);
+        int32_t i = 0;
+        CheckOk(OSc_Setting_GetInt32Value(input1, &i), "get input");
+        CHECK(i == 7);
+        CheckOk(OSc_Setting_GetInt32Value(input0, &i), "get input0");
+        CHECK(i == -3);
+        double v = 0.0;
+        CheckOk(OSc_Setting_GetFloat64Value(level1, &v), "get level");
+        CHECK(v == 0.2);
+        CheckOk(OSc_Setting_GetFloat64Value(level0, &v), "get level0");
+        CHECK(v == -0.1);
+        CheckOk(OSc_Setting_GetFloat64Value(delay1, &v), "get delay");
+        CHECK(v == 3.5);
+        CheckOk(OSc_Setting_GetFloat64Value(delay0, &v), "get delay0");
+        CHECK(v == 0.0);
+
+        CheckOk(OSc_Setting_SetBoolValue(enable1, false), "restore enable");
+        CheckOk(OSc_Setting_SetInt32Value(input1, -4), "restore input");
+        CheckOk(OSc_Setting_SetFloat64Value(level1, -0.1), "restore level");
+        CheckOk(OSc_Setting_SetFloat64Value(delay1, 0.0), "restore delay");
+    }
 
     SECTION("SyncInput: default, allowed values, and round-trip") {
         auto *s = FindSetting(settings, count, "SyncInput");

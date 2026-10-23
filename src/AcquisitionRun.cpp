@@ -17,19 +17,16 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
     double const pixelRate = OScDev_Acquisition_GetPixelRate(acq);
-    TaggerChannels const channels = MakeTaggerChannels(data);
+    TaggerConfig const config = MakeTaggerConfig(data);
 
     ProcessingParams params{
         .width = width,
         .height = height,
         .pixelTime_ps = std::llround(1e12 / pixelRate),
         .numFrames = OScDev_Acquisition_GetNumberOfFrames(acq),
-        .lineClockChannel = channels.lineClock,
-        .syncChannel = channels.sync,
-        .detectors = {{
-            .leadingChannel = channels.photonLeading,
-            .trailingChannel = channels.photonTrailing,
-        }},
+        .lineClockChannel = config.lineClock,
+        .syncChannel = config.sync,
+        .detectors = {},
         .syncDelay_ps = data->syncDelay_ps,
         .lineDelay_ps = data->lineDelay_ps,
         .maxPhotonPulseWidth_ps = data->maxPhotonPulseWidth_ps,
@@ -40,6 +37,9 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .histogramDumpFileName = std::nullopt,
         .rawDataFileName = std::nullopt,
     };
+    for (DetectorConfig const &d : config.detectors)
+        params.detectors.push_back(
+            {.leadingChannel = d.leading, .trailingChannel = d.trailing});
 
     // File names follow OpenScan-BH_SPC's scheme (FileNamePrefix setting
     // + "_NNNN" index shared by all output files); see UniqueFileName.h.
@@ -72,14 +72,17 @@ std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
     // The sync channel's inverted edge is not used by the pipeline, and the
     // Time Tagger transmits every registered channel, so at laser sync rates
     // it would cost as much bandwidth as the sync channel itself.
-    TaggerChannels const channels = MakeTaggerChannels(data);
-    return {
-        channels.sync,
-        channels.photonLeading,
-        channels.photonTrailing,
-        channels.lineClock,
-        data->tagger->getInvertedChannel(channels.lineClock),
+    TaggerConfig const config = MakeTaggerConfig(data);
+    std::vector<channel_t> channels = {
+        config.sync,
+        config.lineClock,
+        data->tagger->getInvertedChannel(config.lineClock),
     };
+    for (DetectorConfig const &d : config.detectors) {
+        channels.push_back(d.leading);
+        channels.push_back(d.trailing);
+    }
+    return channels;
 }
 
 } // namespace

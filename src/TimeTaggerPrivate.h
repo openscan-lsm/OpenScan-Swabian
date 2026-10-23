@@ -1,12 +1,21 @@
 #pragma once
 
 #include "AcquisitionRun.h"
+#include "Processing.h"
 #include "TaggerConfig.h"
 
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
+#include <array>
 #include <memory>
 #include <string>
+
+struct DetectorSettings {
+    bool enabled;
+    int32_t input;
+    double triggerLevel_V;
+    int32_t hardwareDelay_ps;
+};
 
 struct TimeTagger_PrivateData {
     std::string serial;
@@ -16,14 +25,19 @@ struct TimeTagger_PrivateData {
 
     int32_t lineClockChannel = 1;
     int32_t syncChannel = 2;
-    int32_t photonChannel = -3;
 
     double syncTriggerLevel_V = 0.0;
-    double photonTriggerLevel_V = -0.1;
 
     int32_t syncDelay_ps = -12'500;
     int32_t lineDelay_ps = 0;
-    int32_t photonDelay_ps = 0;
+
+    std::array<DetectorSettings, kMaxDetectors> detectors = {{
+        {true, -3, -0.1, 0},
+        {false, -4, -0.1, 0},
+        {false, -5, -0.1, 0},
+        {false, -6, -0.1, 0},
+    }};
+
     // Whether a hardware delay has been written to the currently open device;
     // see ConfigureTagger.
     bool hardwareDelaysApplied = false;
@@ -45,14 +59,26 @@ inline TimeTagger_PrivateData *GetData(OScDev_Device *device) {
 }
 
 // Requires an open device (data->tagger).
-inline TaggerChannels MakeTaggerChannels(TimeTagger_PrivateData *data) {
-    return {
+inline TaggerConfig MakeTaggerConfig(TimeTagger_PrivateData *data) {
+    TaggerConfig config{
         .sync = data->syncChannel,
-        .photonLeading = data->photonChannel,
-        .photonTrailing =
-            data->tagger->getInvertedChannel(data->photonChannel),
+        .syncTriggerLevel_V = data->syncTriggerLevel_V,
         .lineClock = data->lineClockChannel,
+        .detectors = {},
     };
+    for (std::size_t i = 0; i < data->detectors.size(); ++i) {
+        DetectorSettings const &d = data->detectors[i];
+        if (!d.enabled)
+            continue;
+        config.detectors.push_back({
+            .slot = i,
+            .leading = d.input,
+            .trailing = data->tagger->getInvertedChannel(d.input),
+            .triggerLevel_V = d.triggerLevel_V,
+            .hardwareDelay_ps = d.hardwareDelay_ps,
+        });
+    }
+    return config;
 }
 
 OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,

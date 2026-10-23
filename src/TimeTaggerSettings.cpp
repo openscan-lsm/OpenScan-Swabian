@@ -4,10 +4,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <string>
+#include <utility>
 #include <vector>
 
 static TimeTagger_PrivateData *GetSettingDeviceData(OScDev_Setting *setting) {
@@ -15,13 +18,41 @@ static TimeTagger_PrivateData *GetSettingDeviceData(OScDev_Setting *setting) {
         (OScDev_Device *)OScDev_Setting_GetImplData(setting)));
 }
 
-template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
+// Accessors, used as template arguments to the setting classes below, so that
+// those can address either a plain member or a member of detectors[D].
+template <auto Member> auto &Field(TimeTagger_PrivateData &data) {
+    return data.*Member;
+}
+
+template <std::size_t D, auto Member>
+auto &DetectorField(TimeTagger_PrivateData &data) {
+    return data.detectors[D].*Member;
+}
+
+template <auto Access> class BoolSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
+        *value = Access(*GetSettingDeviceData(setting));
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, bool value) {
+        Access(*GetSettingDeviceData(setting)) = value;
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetBool = Get,
+        .SetBool = Set,
+    };
+};
+
+template <auto Access> class ChannelSetting {
     static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
-        *value = GetSettingDeviceData(setting)->*Member;
+        *value = Access(*GetSettingDeviceData(setting));
         return OScDev_OK;
     }
     static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
-        GetSettingDeviceData(setting)->*Member = value;
+        Access(*GetSettingDeviceData(setting)) = value;
         return OScDev_OK;
     }
     static OScDev_Error
@@ -60,15 +91,13 @@ template <int32_t TimeTagger_PrivateData::*Member> class ChannelSetting {
     };
 };
 
-template <double TimeTagger_PrivateData::*Level,
-          int32_t TimeTagger_PrivateData::*Channel>
-class TriggerLevelSetting {
+template <auto Level, auto Channel> class TriggerLevelSetting {
     static OScDev_Error Get(OScDev_Setting *setting, double *value) {
-        *value = GetSettingDeviceData(setting)->*Level;
+        *value = Level(*GetSettingDeviceData(setting));
         return OScDev_OK;
     }
     static OScDev_Error Set(OScDev_Setting *setting, double value) {
-        GetSettingDeviceData(setting)->*Level = value;
+        Level(*GetSettingDeviceData(setting)) = value;
         return OScDev_OK;
     }
     static OScDev_Error
@@ -89,7 +118,7 @@ class TriggerLevelSetting {
         std::vector<double> range;
         try {
             range =
-                data->tagger->getTriggerLevelRange(std::abs(data->*Channel));
+                data->tagger->getTriggerLevelRange(std::abs(Channel(*data)));
         } catch (std::exception const &e) {
             return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
         }
@@ -149,7 +178,7 @@ struct PositiveNsRange {
     }
 };
 
-template <int32_t TimeTagger_PrivateData::*Channel> struct HardwareDelayRange {
+template <auto Channel> struct HardwareDelayRange {
     static OScDev_Error GetRange(OScDev_Setting *setting, double *min,
                                  double *max) {
         auto *data = GetSettingDeviceData(setting);
@@ -160,7 +189,7 @@ template <int32_t TimeTagger_PrivateData::*Channel> struct HardwareDelayRange {
         }
         std::vector<timestamp_t> range;
         try {
-            range = data->tagger->getDelayHardwareRange(data->*Channel);
+            range = data->tagger->getDelayHardwareRange(Channel(*data));
         } catch (std::exception const &e) {
             return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
         }
@@ -182,14 +211,13 @@ template <int32_t TimeTagger_PrivateData::*Channel> struct HardwareDelayRange {
 } // namespace
 
 // Stored in picoseconds; exposed in nanoseconds, rounded to the nearest ps.
-template <int32_t TimeTagger_PrivateData::*Member, class Range>
-class NanosecondSetting {
+template <auto Access, class Range> class NanosecondSetting {
     static OScDev_Error Get(OScDev_Setting *setting, double *value) {
-        *value = PsToNs(GetSettingDeviceData(setting)->*Member);
+        *value = PsToNs(Access(*GetSettingDeviceData(setting)));
         return OScDev_OK;
     }
     static OScDev_Error Set(OScDev_Setting *setting, double value) {
-        GetSettingDeviceData(setting)->*Member = NsToPs(value);
+        Access(*GetSettingDeviceData(setting)) = NsToPs(value);
         return OScDev_OK;
     }
     static OScDev_Error
@@ -205,23 +233,6 @@ class NanosecondSetting {
         .GetFloat64 = Get,
         .SetFloat64 = Set,
         .GetFloat64Range = Range::GetRange,
-    };
-};
-
-class SaveHistogramsSetting {
-    static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
-        *value = GetSettingDeviceData(setting)->saveHistograms;
-        return OScDev_OK;
-    }
-    static OScDev_Error Set(OScDev_Setting *setting, bool value) {
-        GetSettingDeviceData(setting)->saveHistograms = value;
-        return OScDev_OK;
-    }
-
-  public:
-    static inline OScDev_SettingImpl impl = {
-        .GetBool = Get,
-        .SetBool = Set,
     };
 };
 
@@ -296,40 +307,6 @@ class HistogramBinWidthSetting {
     };
 };
 
-class CumulativeSetting {
-    static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
-        *value = GetSettingDeviceData(setting)->cumulative;
-        return OScDev_OK;
-    }
-    static OScDev_Error Set(OScDev_Setting *setting, bool value) {
-        GetSettingDeviceData(setting)->cumulative = value;
-        return OScDev_OK;
-    }
-
-  public:
-    static inline OScDev_SettingImpl impl = {
-        .GetBool = Get,
-        .SetBool = Set,
-    };
-};
-
-class SaveRawDataSetting {
-    static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
-        *value = GetSettingDeviceData(setting)->saveRawData;
-        return OScDev_OK;
-    }
-    static OScDev_Error Set(OScDev_Setting *setting, bool value) {
-        GetSettingDeviceData(setting)->saveRawData = value;
-        return OScDev_OK;
-    }
-
-  public:
-    static inline OScDev_SettingImpl impl = {
-        .GetBool = Get,
-        .SetBool = Set,
-    };
-};
-
 class FileNamePrefixSetting {
     static OScDev_Error Get(OScDev_Setting *setting, char *value) {
         strncpy_s(value, OScDev_MAX_STR_SIZE,
@@ -349,55 +326,87 @@ class FileNamePrefixSetting {
     };
 };
 
+namespace {
+
+using PD = TimeTagger_PrivateData;
+
+struct SettingEntry {
+    std::string name;
+    OScDev_ValueType type;
+    OScDev_SettingImpl *impl;
+};
+
+template <std::size_t D>
+void AppendDetectorSettings(std::vector<SettingEntry> &entries) {
+    using DS = DetectorSettings;
+    constexpr auto input = &DetectorField<D, &DS::input>;
+    std::string const name = "Detector" + std::to_string(D);
+    entries.push_back({"Enable" + name, OScDev_ValueType_Bool,
+                       &BoolSetting<&DetectorField<D, &DS::enabled>>::impl});
+    entries.push_back({name + "Input", OScDev_ValueType_Int32,
+                       &ChannelSetting<input>::impl});
+    entries.push_back(
+        {name + "TriggerLevel_V", OScDev_ValueType_Float64,
+         &TriggerLevelSetting<&DetectorField<D, &DS::triggerLevel_V>,
+                              input>::impl});
+    entries.push_back(
+        {name + "HardwareDelay_ns", OScDev_ValueType_Float64,
+         &NanosecondSetting<&DetectorField<D, &DS::hardwareDelay_ps>,
+                            HardwareDelayRange<input>>::impl});
+}
+
+std::vector<SettingEntry> MakeSettingEntries() {
+    constexpr auto syncChannel = &Field<&PD::syncChannel>;
+    std::vector<SettingEntry> entries = {
+        {"SyncInput", OScDev_ValueType_Int32,
+         &ChannelSetting<syncChannel>::impl},
+        {"LineClockInput", OScDev_ValueType_Int32,
+         &ChannelSetting<&Field<&PD::lineClockChannel>>::impl},
+        {"SyncTriggerLevel_V", OScDev_ValueType_Float64,
+         &TriggerLevelSetting<&Field<&PD::syncTriggerLevel_V>,
+                              syncChannel>::impl},
+        {"SyncDelay_ns", OScDev_ValueType_Float64,
+         &NanosecondSetting<&Field<&PD::syncDelay_ps>, SignedNsRange>::impl},
+        {"LineDelay_ns", OScDev_ValueType_Float64,
+         &NanosecondSetting<&Field<&PD::lineDelay_ps>,
+                            NonNegativeNsRange>::impl},
+    };
+    [&]<std::size_t... D>(std::index_sequence<D...>) {
+        (AppendDetectorSettings<D>(entries), ...);
+    }(std::make_index_sequence<kMaxDetectors>());
+    entries.insert(entries.end(),
+                   {
+                       {"MaxPhotonPulseWidth_ns", OScDev_ValueType_Float64,
+                        &NanosecondSetting<&Field<&PD::maxPhotonPulseWidth_ps>,
+                                           PositiveNsRange>::impl},
+                       {"MaxDiffTime_ns", OScDev_ValueType_Float64,
+                        &NanosecondSetting<&Field<&PD::maxDiffTime_ps>,
+                                           PositiveNsRange>::impl},
+                       {"SaveHistograms", OScDev_ValueType_Bool,
+                        &BoolSetting<&Field<&PD::saveHistograms>>::impl},
+                       {"HistogramBins", OScDev_ValueType_Int32,
+                        &HistogramBinsSetting::impl},
+                       {"HistogramBinWidth_ps", OScDev_ValueType_Int32,
+                        &HistogramBinWidthSetting::impl},
+                       {"Cumulative", OScDev_ValueType_Bool,
+                        &BoolSetting<&Field<&PD::cumulative>>::impl},
+                       {"SaveRawData", OScDev_ValueType_Bool,
+                        &BoolSetting<&Field<&PD::saveRawData>>::impl},
+                       {"FileNamePrefix", OScDev_ValueType_String,
+                        &FileNamePrefixSetting::impl},
+                   });
+    return entries;
+}
+
+} // namespace
+
 OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device,
                                      OScDev_PtrArray **settings) {
-    using PD = TimeTagger_PrivateData;
-    struct Entry {
-        const char *name;
-        OScDev_ValueType type;
-        OScDev_SettingImpl *impl;
-    };
-    Entry const entries[] = {
-        {"SyncInput", OScDev_ValueType_Int32,
-         &ChannelSetting<&PD::syncChannel>::impl},
-        {"LineClockInput", OScDev_ValueType_Int32,
-         &ChannelSetting<&PD::lineClockChannel>::impl},
-        {"Detector0Input", OScDev_ValueType_Int32,
-         &ChannelSetting<&PD::photonChannel>::impl},
-        {"SyncTriggerLevel_V", OScDev_ValueType_Float64,
-         &TriggerLevelSetting<&PD::syncTriggerLevel_V,
-                              &PD::syncChannel>::impl},
-        {"Detector0TriggerLevel_V", OScDev_ValueType_Float64,
-         &TriggerLevelSetting<&PD::photonTriggerLevel_V,
-                              &PD::photonChannel>::impl},
-        {"SyncDelay_ns", OScDev_ValueType_Float64,
-         &NanosecondSetting<&PD::syncDelay_ps, SignedNsRange>::impl},
-        {"LineDelay_ns", OScDev_ValueType_Float64,
-         &NanosecondSetting<&PD::lineDelay_ps, NonNegativeNsRange>::impl},
-        {"Detector0HardwareDelay_ns", OScDev_ValueType_Float64,
-         &NanosecondSetting<&PD::photonDelay_ps,
-                            HardwareDelayRange<&PD::photonChannel>>::impl},
-        {"MaxPhotonPulseWidth_ns", OScDev_ValueType_Float64,
-         &NanosecondSetting<&PD::maxPhotonPulseWidth_ps,
-                            PositiveNsRange>::impl},
-        {"MaxDiffTime_ns", OScDev_ValueType_Float64,
-         &NanosecondSetting<&PD::maxDiffTime_ps, PositiveNsRange>::impl},
-        {"SaveHistograms", OScDev_ValueType_Bool,
-         &SaveHistogramsSetting::impl},
-        {"HistogramBins", OScDev_ValueType_Int32, &HistogramBinsSetting::impl},
-        {"HistogramBinWidth_ps", OScDev_ValueType_Int32,
-         &HistogramBinWidthSetting::impl},
-        {"Cumulative", OScDev_ValueType_Bool, &CumulativeSetting::impl},
-        {"SaveRawData", OScDev_ValueType_Bool, &SaveRawDataSetting::impl},
-        {"FileNamePrefix", OScDev_ValueType_String,
-         &FileNamePrefixSetting::impl},
-    };
-
     *settings = OScDev_PtrArray_Create();
-    for (Entry const &e : entries) {
+    for (SettingEntry const &e : MakeSettingEntries()) {
         OScDev_Setting *s;
         OScDev_RichError *err = OScDev_Error_AsRichError(
-            OScDev_Setting_Create(&s, e.name, e.type, e.impl, device));
+            OScDev_Setting_Create(&s, e.name.c_str(), e.type, e.impl, device));
         if (err) {
             for (size_t i = 0; i < OScDev_PtrArray_Size(*settings); ++i) {
                 OScDev_Setting_Destroy(
