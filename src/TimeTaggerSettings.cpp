@@ -391,8 +391,8 @@ std::vector<SettingEntry> MakeSettingEntries() {
              &HistogramBinWidthSetting::impl},
             {"IntensityImagesAreCumulative", OScDev_ValueType_Bool,
              &BoolSetting<&Field<&PD::intensityImagesAreCumulative>>::impl},
-            {"SaveRawData", OScDev_ValueType_Bool,
-             &BoolSetting<&Field<&PD::saveRawData>>::impl},
+            {"SaveTagStream", OScDev_ValueType_Bool,
+             &BoolSetting<&Field<&PD::saveTagStream>>::impl},
             {"FileNamePrefix", OScDev_ValueType_String,
              &FileNamePrefixSetting::impl},
         });

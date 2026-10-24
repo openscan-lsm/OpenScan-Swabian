@@ -49,7 +49,7 @@ struct TimeTagger_PrivateData {
     int32_t histogramBinWidth_ps = 50;
 
     bool saveHistograms = false;
-    bool saveRawData = false;
+    bool saveTagStream = false;
     std::string fileNamePrefix = "OpenScan-Swabian";
 };
 

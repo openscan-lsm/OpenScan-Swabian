@@ -36,7 +36,7 @@ if get_option('simulate')
             '-DFAKE_CLOCK_SCANNER_MODULE_DIR="' + fake_clock_scanner_module_dir + '"',
         ],
         # test_acquisition.cpp includes TimeTagger.h (the fake) only to
-        # decode the raw-dump Tag layout it wrote -- see its own comment.
+        # decode the .ttdump Tag layout it wrote -- see its own comment.
         include_directories: include_directories(
             '../../src/fake_timetagger/include',
         ),

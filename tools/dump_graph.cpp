@@ -10,15 +10,15 @@
 namespace {
 
 constexpr char kUsage[] =
-    "Usage: dump_graph [--cumulative-intensity] [--histogram-dump]\n"
-    "                  [--raw-data] [--detectors N]\n"
+    "Usage: dump_graph [--cumulative-intensity] [--histogram-file]\n"
+    "                  [--tag-stream-file] [--detectors N]\n"
     "\n"
     "Print the libtcspc processing graph in Graphviz dot format.\n"
     "\n"
     "  --cumulative-intensity  cumulative (rather than per-frame) intensity\n"
     "                          images\n"
-    "  --histogram-dump        include the histogram dump file output\n"
-    "  --raw-data              include the raw data file output\n"
+    "  --histogram-file        include the histogram file output\n"
+    "  --tag-stream-file       include the tag stream file output\n"
     "  --detectors N           number of detectors, 1-4 (default 1)\n";
 
 } // namespace
@@ -39,8 +39,8 @@ int main(int argc, char *argv[]) {
         .intensityImagesAreCumulative = false,
         .histogramBins = 256,
         .histogramBinWidth_ps = 50,
-        .histogramDumpFileName = {},
-        .rawDataFileName = {},
+        .histogramFileName = {},
+        .tagStreamFileName = {},
     };
     int numDetectors = 1;
 
@@ -49,10 +49,10 @@ int main(int argc, char *argv[]) {
         std::string_view const arg = argv[i];
         if (arg == "--cumulative-intensity") {
             params.intensityImagesAreCumulative = true;
-        } else if (arg == "--histogram-dump") {
-            params.histogramDumpFileName = "NUL";
-        } else if (arg == "--raw-data") {
-            params.rawDataFileName = "NUL";
+        } else if (arg == "--histogram-file") {
+            params.histogramFileName = "NUL";
+        } else if (arg == "--tag-stream-file") {
+            params.tagStreamFileName = "NUL";
         } else if (arg == "--detectors" && i + 1 < argc) {
             std::string_view const value = argv[++i];
             auto const [end, ec] = std::from_chars(

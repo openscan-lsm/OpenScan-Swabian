@@ -65,8 +65,8 @@ ProcessingParams MakeParams(bool cumulativeIntensity,
         .intensityImagesAreCumulative = cumulativeIntensity,
         .histogramBins = kBins,
         .histogramBinWidth_ps = kBinWidth,
-        .histogramDumpFileName = std::move(histogramFile),
-        .rawDataFileName = std::nullopt,
+        .histogramFileName = std::move(histogramFile),
+        .tagStreamFileName = std::nullopt,
     };
     for (std::uint32_t i = 0; i < kNumDetectors; ++i)
         params.detectors.push_back({.leadingChannel = LeadingChannel(i),

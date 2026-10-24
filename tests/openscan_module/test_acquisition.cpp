@@ -10,8 +10,8 @@
 #include <catch2/generators/catch_generators.hpp>
 
 // Only for the Tag struct and the fake's channel/period constants, to decode
-// the raw dump byte-for-byte in the same layout Processing.cpp wrote it and
-// to set SyncDelay_ns to the fake's sync period -- this test otherwise
+// the .ttdump file byte-for-byte in the same layout Processing.cpp wrote it
+// and to set SyncDelay_ns to the fake's sync period -- this test otherwise
 // only drives the module through the public OpenScanLib API, like every
 // other test in this directory.
 #include <TimeTagger.h>
@@ -278,22 +278,22 @@ TEST_CASE("IntensityImagesAreCumulative delivers one image per frame, each "
     RestoreSharedSettings(run);
 }
 
-TEST_CASE("SaveRawData writes every registered channel (both photon and "
-          "line clock edges, but only the configured sync edge) to a .raw "
-          "dump, with the conditional filter applied to the sync",
+TEST_CASE("SaveTagStream writes every registered channel (both photon and "
+          "line clock edges, but only the configured sync edge) to a "
+          ".ttdump file, with the conditional filter applied to the sync",
           "[acquisition][slow]") {
     LSMFixture fx;
 
-    // Route the dump into a scratch directory so we know exactly where to
-    // find (and can clean up) the resulting file
+    // Route the tag stream into a scratch directory so we know exactly where
+    // to find (and can clean up) the resulting file
     std::filesystem::path const scratch_dir =
         std::filesystem::temp_directory_path() /
-        "openscan-swabian-raw-dump-test";
+        "openscan-swabian-tag-stream-test";
     std::filesystem::remove_all(scratch_dir);
     std::filesystem::create_directories(scratch_dir);
     std::string const prefix = (scratch_dir / "acq").string();
 
-    // This test only inspects the raw dump file, not the delivered image,
+    // This test only inspects the tag stream file, not the delivered image,
     // so the capture just needs to exist as a valid callback target.
     FrameCapture capture;
     capture.width = kResolution;
@@ -305,16 +305,16 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
                         FindSetting(settings, settingCount, "FileNamePrefix"),
                         prefix.c_str()),
                     "set FileNamePrefix");
-            CheckOk(
-                OSc_Setting_SetBoolValue(
-                    FindSetting(settings, settingCount, "SaveRawData"), true),
-                "set SaveRawData");
+            CheckOk(OSc_Setting_SetBoolValue(
+                        FindSetting(settings, settingCount, "SaveTagStream"),
+                        true),
+                    "set SaveTagStream");
         });
 
     // Reaching the requested frame count only calls finish_running()
     // (IteratorBase stops polling for more data); it deliberately does NOT
     // flush the pipeline -- see IteratorBase::finish_running()'s own
-    // comment in TimeTagger.h. The raw data file is only closed once
+    // comment in TimeTagger.h. The tag stream file is only closed once
     // something actually stops the acquisition: TimeTagger.cpp's Stop()
     // resets the AcquisitionRun, whose destructor stops the measurement,
     // halts and joins the processing thread, then destroys the graph
@@ -326,13 +326,13 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);
 
-    // UniqueFileName() (src/UniqueFileName.cpp) picks "<prefix>_0000.raw"
+    // UniqueFileName() (src/UniqueFileName.cpp) picks "<prefix>_0000.ttdump"
     // for the first file at a fresh prefix -- this scratch directory was
     // just created above, so that's the only file that can exist here.
-    std::filesystem::path const raw_file = prefix + "_0000.raw";
-    REQUIRE(std::filesystem::exists(raw_file));
+    std::filesystem::path const ttdump_file = prefix + "_0000.ttdump";
+    REQUIRE(std::filesystem::exists(ttdump_file));
 
-    std::ifstream file(raw_file, std::ios::binary);
+    std::ifstream file(ttdump_file, std::ios::binary);
     REQUIRE(file.good());
     bool sawRisingLineClock = false;
     bool sawFallingLineClock = false;
@@ -379,10 +379,10 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
     // device_test_support.hpp's Environment comment) -- otherwise these
     // stick around for every later test case in this binary,
     // test_device_settings.cpp's default-value checks included.
-    CheckOk(
-        OSc_Setting_SetBoolValue(
-            FindSetting(run.settings, run.settingCount, "SaveRawData"), false),
-        "restore SaveRawData");
+    CheckOk(OSc_Setting_SetBoolValue(
+                FindSetting(run.settings, run.settingCount, "SaveTagStream"),
+                false),
+            "restore SaveTagStream");
     CheckOk(OSc_Setting_SetStringValue(
                 FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
                 "OpenScan-Swabian"),
@@ -409,8 +409,7 @@ HistogramFile AcquireHistogramFile(bool twoDetectors) {
     LSMFixture fx;
 
     std::filesystem::path const scratch_dir =
-        std::filesystem::temp_directory_path() /
-        "openscan-swabian-hist-dump-test";
+        std::filesystem::temp_directory_path() / "openscan-swabian-hist-test";
     std::filesystem::remove_all(scratch_dir);
     std::filesystem::create_directories(scratch_dir);
     std::string const prefix = (scratch_dir / "acq").string();
@@ -438,7 +437,7 @@ HistogramFile AcquireHistogramFile(bool twoDetectors) {
         });
 
     // The file stays open until the acquisition is stopped; see the
-    // SaveRawData test above.
+    // SaveTagStream test above.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
 
     OSc_Acquisition_Destroy(run.acq);

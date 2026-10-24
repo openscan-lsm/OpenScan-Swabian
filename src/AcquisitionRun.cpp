@@ -34,8 +34,8 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .intensityImagesAreCumulative = data->intensityImagesAreCumulative,
         .histogramBins = data->histogramBins,
         .histogramBinWidth_ps = data->histogramBinWidth_ps,
-        .histogramDumpFileName = std::nullopt,
-        .rawDataFileName = std::nullopt,
+        .histogramFileName = std::nullopt,
+        .tagStreamFileName = std::nullopt,
     };
     for (DetectorConfig const &d : config.detectors)
         params.detectors.push_back(
@@ -43,18 +43,18 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
 
     // File names follow OpenScan-BH_SPC's scheme (FileNamePrefix setting
     // + "_NNNN" index shared by all output files); see UniqueFileName.h.
-    if (data->saveHistograms || data->saveRawData) {
+    if (data->saveHistograms || data->saveTagStream) {
         std::optional<std::string> const uniqueName =
-            UniqueFileName(data->fileNamePrefix, {".raw", ".hist"});
+            UniqueFileName(data->fileNamePrefix, {".ttdump", ".hist"});
         if (!uniqueName)
             throw std::runtime_error(
                 "Could not find a unique file name for output files "
                 "(prefix '" +
                 data->fileNamePrefix + "')");
         if (data->saveHistograms)
-            params.histogramDumpFileName = *uniqueName + ".hist";
-        if (data->saveRawData)
-            params.rawDataFileName = *uniqueName + ".raw";
+            params.histogramFileName = *uniqueName + ".hist";
+        if (data->saveTagStream)
+            params.tagStreamFileName = *uniqueName + ".ttdump";
     }
 
     return params;

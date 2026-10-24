@@ -9,18 +9,18 @@ subdir('openscan_module')
 dump_graph_variants = {
     'default': [],
     'cumulative_intensity': ['--cumulative-intensity'],
-    'all_outputs': ['--histogram-dump', '--raw-data'],
+    'all_outputs': ['--histogram-file', '--tag-stream-file'],
     'cumulative_intensity_all_outputs': [
         '--cumulative-intensity',
-        '--histogram-dump',
-        '--raw-data',
+        '--histogram-file',
+        '--tag-stream-file',
     ],
     'four_detectors': ['--detectors', '4'],
     'four_detectors_cumulative_intensity_all_outputs': [
         '--detectors', '4',
         '--cumulative-intensity',
-        '--histogram-dump',
-        '--raw-data',
+        '--histogram-file',
+        '--tag-stream-file',
     ],
 }
 foreach name, args : dump_graph_variants

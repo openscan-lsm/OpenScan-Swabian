@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a raw Swabian Time Tagger tag dump in a human-readable form.
+"""Print a Time Tagger tag stream dump (.ttdump) in a human-readable form.
 
 Reads the file format produced by the vendor SDK's `Dump` measurement
 (driver/include/measurements/Dump.h): a sequence of 16-byte (128-bit)
@@ -55,7 +55,7 @@ def format_record(index, tag_type, reserved, missed_events, channel, time_ps):
     return line
 
 
-def dump_tags(path, max_tags, out):
+def print_ttdump(path, max_tags, out):
     with open(path, "rb") as f:
         data = f.read()
 
@@ -64,7 +64,7 @@ def dump_tags(path, max_tags, out):
         print(
             f"warning: file size {len(data)} is not a multiple of "
             f"{RECORD_SIZE} bytes; ignoring trailing {extra_bytes} byte(s) "
-            "(truncated or not a raw tag dump?)",
+            "(truncated or not a tag stream dump (.ttdump)?)",
             file=sys.stderr,
         )
 
@@ -90,14 +90,14 @@ def dump_tags(path, max_tags, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file", help="raw tag dump file (from Dump())")
+    parser.add_argument("file", help="tag stream dump (.ttdump) file")
     parser.add_argument(
         "-n", "--max-tags", type=int, default=None,
         help="stop after printing this many tags (default: print all)",
     )
     args = parser.parse_args()
 
-    dump_tags(args.file, args.max_tags, sys.stdout)
+    print_ttdump(args.file, args.max_tags, sys.stdout)
 
 
 if __name__ == "__main__":

@@ -46,8 +46,8 @@ struct ProcessingParams {
     std::int32_t histogramBinWidth_ps;
 
     // Files are written only if the name is set.
-    std::optional<std::string> histogramDumpFileName;
-    std::optional<std::string> rawDataFileName;
+    std::optional<std::string> histogramFileName;
+    std::optional<std::string> tagStreamFileName;
 };
 
 // Receives one u16 sample per pixel (width * height), valid only for the
