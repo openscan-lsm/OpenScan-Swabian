@@ -4,6 +4,8 @@ subdir('fake_timetagger')
 subdir('acquisition_lifecycle')
 # Contains tests for the OpenScan module
 subdir('openscan_module')
+# Contains tests for file output streams
+subdir('file_output')
 
 # Smoke tests for tools/dump_graph.cpp, one per graph shape
 dump_graph_variants = {

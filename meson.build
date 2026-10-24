@@ -93,6 +93,21 @@ libtcspc_dep = dependency(
     ]
 )
 
+libzstd_dep = dependency(
+    'libzstd',
+    fallback: ['zstd', 'libzstd_dep'],
+    static: true,
+    default_options: [
+        'default_library=static',
+        'bin_programs=false',
+        'bin_tests=false',
+        'bin_contrib=false',
+        'zlib=disabled',
+        'lzma=disabled',
+        'lz4=disabled',
+    ],
+)
+
 openscandevicelib_dep = dependency(
     'OpenScanDeviceLib',
     fallback: ['OpenScanLib', 'OpenScanDeviceLib'],
@@ -141,6 +156,7 @@ osdev = shared_module(
     ],
     dependencies: [
         libtcspc_dep,
+        libzstd_dep,
         openscandevicelib_dep,
         time_tagger_dep,
     ],
