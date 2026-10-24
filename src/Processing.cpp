@@ -295,8 +295,7 @@ auto make_processor(ProcessingParams const &params,
             // Unused slots still forward flush, so that the writer is
             // flushed once every slot has been.
             if (i >= num_detectors)
-                return tc_processor(
-                    select<type_list<>>(std::move(writer_inputs[i])));
+                return tc_processor(select_none(std::move(writer_inputs[i])));
             return tc_processor(
             map_to_datapoints<time_correlated_detection_event<>>(
                 difftime_data_mapper(),
@@ -347,7 +346,7 @@ auto make_processor(ProcessingParams const &params,
         arg::start_channel{params.syncChannel},
         leading_channels,
         arg::time_window<abstime_type>{params.maxDiffTime_ps},
-    select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
+    select_except<type_list<detection_event<>>>(
     time_correlate_at_stop(
     std::move(tc_merge)))));
 
@@ -358,7 +357,7 @@ auto make_processor(ProcessingParams const &params,
     auto photon_processor =
     pair_pulses<0>(leading_channels, trailing_channels,
                    params.maxPhotonPulseWidth_ps,
-    select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
+    select_except<type_list<detection_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
     // the start (leading edge) side of the pair, not the stop (trailing
     // edge) side -- downstream (the sync/photon pair_all_between above and
@@ -383,7 +382,7 @@ auto make_processor(ProcessingParams const &params,
     convert_sequences_to_start_stop<pixel_tick_event, pixel_start_event, pixel_stop_event>(
         arg::count{std::size_t(params.width)},
     // Filter out the line clock events
-    select<type_list<pixel_start_event, pixel_stop_event, time_reached_event<>>>(
+    select_except<type_list<detection_event<>>>(
     // Enforce pixel start/pixel stop alternation
     check_alternating<pixel_start_event, pixel_stop_event>(
     stop_with_error<type_list<warning_event>>(
