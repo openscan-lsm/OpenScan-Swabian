@@ -314,7 +314,7 @@ auto make_processor(ProcessingParams const &params,
         }));
 
         return tc_processor(
-            broadcast<tc_event_list>(
+            broadcast_homogeneous(
                 std::move(full_route),
                 std::move(live_route)));
     }();
