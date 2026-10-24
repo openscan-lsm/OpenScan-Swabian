@@ -11,14 +11,13 @@ namespace {
 
 constexpr char kUsage[] =
     "Usage: dump_graph [--cumulative-intensity] [--histogram-file]\n"
-    "                  [--tag-stream-file] [--detectors N]\n"
+    "                  [--detectors N]\n"
     "\n"
     "Print the libtcspc processing graph in Graphviz dot format.\n"
     "\n"
     "  --cumulative-intensity  cumulative (rather than per-frame) intensity\n"
     "                          images\n"
     "  --histogram-file        include the histogram file output\n"
-    "  --tag-stream-file       include the tag stream file output\n"
     "  --detectors N           number of detectors, 1-4 (default 1)\n";
 
 } // namespace
@@ -46,15 +45,13 @@ int main(int argc, char *argv[]) {
     };
     int numDetectors = 1;
 
-    // The file outputs open their files on construction; NUL discards.
+    // The histogram file output opens its file on construction; NUL discards.
     for (int i = 1; i < argc; ++i) {
         std::string_view const arg = argv[i];
         if (arg == "--cumulative-intensity") {
             params.intensityImagesAreCumulative = true;
         } else if (arg == "--histogram-file") {
             params.histogramFileName = "NUL";
-        } else if (arg == "--tag-stream-file") {
-            params.tagStreamFileName = "NUL";
         } else if (arg == "--detectors" && i + 1 < argc) {
             std::string_view const value = argv[++i];
             auto const [end, ec] = std::from_chars(

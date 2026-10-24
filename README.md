@@ -97,9 +97,9 @@ meson selects, based on the `simulate` option.
 
 The build also produces `dump_graph.exe`, which prints the processing graph
 in Graphviz dot format. The graph's shape depends on the cumulative
-intensity and file output settings, selected with `--cumulative-intensity`,
-`--histogram-file`, and `--tag-stream-file`, and on the number of detectors,
-selected with `--detectors N` (1–4, default 1):
+intensity and histogram file settings, selected with `--cumulative-intensity`
+and `--histogram-file`, and on the number of detectors, selected with
+`--detectors N` (1–4, default 1):
 
 ```
 builddir\dump_graph.exe --histogram-file | dot -Tsvg -o graph.svg

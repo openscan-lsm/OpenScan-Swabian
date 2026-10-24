@@ -68,10 +68,14 @@ inline constexpr int kZstdCompressionLevel = 3;
 using plain_file_stream = decltype(tcspc::binary_file_output_stream(
     std::string(), tcspc::arg::truncate{true}));
 
+using null_stream = decltype(tcspc::null_output_stream());
+
 // Output stream to a file that is either plain or zstd-compressed, as chosen
-// at run time.
+// at run time, or that discards output when there is no file.
 class FileOutputStream {
-    std::variant<plain_file_stream, ZstdOutputStream<plain_file_stream>> s_;
+    std::variant<plain_file_stream, ZstdOutputStream<plain_file_stream>,
+                 null_stream>
+        s_;
 
   public:
     template <typename Stream>
@@ -90,9 +94,12 @@ class FileOutputStream {
     }
 };
 
-FileOutputStream open_file_output(std::string const &name, bool compress) {
+FileOutputStream open_file_output(std::optional<std::string> const &name,
+                                  bool compress) {
+    if (!name)
+        return FileOutputStream(tcspc::null_output_stream());
     auto file =
-        tcspc::binary_file_output_stream(name, tcspc::arg::truncate{true});
+        tcspc::binary_file_output_stream(*name, tcspc::arg::truncate{true});
     if (compress)
         return FileOutputStream(
             ZstdOutputStream(std::move(file), kZstdCompressionLevel));
@@ -282,7 +289,7 @@ auto make_processor(ProcessingParams const &params,
         // order, giving (channel, y, x, bin).
         auto writer_inputs = merge_n_unsorted<kMaxDetectors>(
             write_binary_stream(
-                open_file_output(*params.histogramFileName,
+                open_file_output(params.histogramFileName,
                                  params.histogramFileFormat ==
                                      HistogramFileFormat::HistZst),
                 recycling_bucket_source<std::byte>::create(),
@@ -410,30 +417,23 @@ auto make_processor(ProcessingParams const &params,
         std::move(photon_processor),
         std::move(pixel_marker_processor)))))));
 
-    // Save the tags exactly as processed (if a file name was given): 16-byte
-    // records in the vendor SDK's Dump format.
-    type_erased_processor<buffered_event_list> bucket_downstream =
-        [&]() -> type_erased_processor<buffered_event_list> {
-        if (!params.tagStreamFileName)
-            return type_erased_processor<buffered_event_list>(
-                std::move(unbatched_chain));
-
-        return type_erased_processor<buffered_event_list>(
-            broadcast<buffered_event_list>(
-                // Only the tags go to the file (view_as_bytes would
-                // otherwise serialize the time_reached_event too).
-                select<type_list<tag_bucket>>(
-                view_as_bytes(
-                write_binary_stream(
-                    open_file_output(*params.tagStreamFileName,
-                                     params.tagStreamFileFormat ==
-                                         TagStreamFileFormat::TTDumpZst),
-                    recycling_bucket_source<std::byte>::create(),
-                    // Not flushed if the acquisition is halted, so use a
-                    // granularity that never leaves bytes buffered.
-                    arg::granularity<>{sizeof(swabian_tag_event)}))),
-                std::move(unbatched_chain)));
-    }();
+    // Save the tags exactly as processed (discarded if no file name was
+    // given): 16-byte records in the vendor SDK's Dump format.
+    auto bucket_downstream =
+    broadcast<buffered_event_list>(
+        // Only the tags go to the file (view_as_bytes would otherwise
+        // serialize the time_reached_event too).
+        select<type_list<tag_bucket>>(
+        view_as_bytes(
+        write_binary_stream(
+            open_file_output(params.tagStreamFileName,
+                             params.tagStreamFileFormat ==
+                                 TagStreamFileFormat::TTDumpZst),
+            recycling_bucket_source<std::byte>::create(),
+            // Not flushed if the acquisition is halted, so use a
+            // granularity that never leaves bytes buffered.
+            arg::granularity<>{sizeof(swabian_tag_event)}))),
+        std::move(unbatched_chain));
 
     // Each SDK-delivered batch of tags becomes one bucket, followed by a
     // time_reached_event; both cross the thread boundary through the buffer.
