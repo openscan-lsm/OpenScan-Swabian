@@ -39,9 +39,11 @@ if get_option('simulate')
         # decode the .ttdump Tag layout it wrote -- see its own comment.
         include_directories: include_directories(
             '../../src/fake_timetagger/include',
+            '..',
         ),
         dependencies: [
             catch2_with_main_dep,
+            libzstd_dep,
             openscanlib_dep,
         ],
     )

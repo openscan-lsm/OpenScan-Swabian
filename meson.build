@@ -166,7 +166,7 @@ dump_graph_exe = executable(
     'dump_graph',
     ['tools/dump_graph.cpp', 'src/Processing.cpp'],
     include_directories: include_directories('src'),
-    dependencies: [libtcspc_dep],
+    dependencies: [libtcspc_dep, libzstd_dep],
 )
 
 if get_option('tests').enabled()

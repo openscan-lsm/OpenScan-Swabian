@@ -36,7 +36,8 @@ conventional 16-bit image per detector.
   without real hardware attached.
 - `tools/print_ttdump.py` — decodes a tag stream file (`.ttdump`, the
   format written by the SDK's `Dump` measurement and by this module's own
-  `SaveTagStream` setting) into human-readable text.
+  `SaveTagStream` setting, or `.ttdump.zst`) into human-readable text.
+  Requires Python 3.14+.
 - `tools/dump_graph.cpp` — the `dump_graph` executable, which prints the
   libtcspc processing graph (built by the same `MakeProcessingPipeline` the
   module uses) in Graphviz dot format. See
@@ -276,16 +277,23 @@ The following are shared by all detectors:
 - **SaveHistograms** (default `false`) — when enabled, the full per-pixel
   histogram (HistogramBins bins/pixel) of every enabled detector is
   additionally computed, accumulated over the whole acquisition, and written
-  to `<prefix>_NNNN.hist` (see **FileNamePrefix**), for offline inspection.
-  The file is a headerless native-endian `uint16` array with shape (channel, y, x, bin),
-  written once, at the end of the acquisition; `channel` is the OpenScan
-  channel index (see [Detectors](#detectors)). Nothing is written if the
+  to `<prefix>_NNNN.hist` or `<prefix>_NNNN.hist.zst`, depending on
+  **HistogramFileFormat** (see also **FileNamePrefix**), for offline
+  inspection. The histogram has shape (channel, y, x, bin) and is written
+  once, at the end of the acquisition; `channel` is the OpenScan channel
+  index (see [Detectors](#detectors)). Nothing is written if the
   acquisition is stopped before the requested number of frames is reached.
   This is off by default because computing it roughly doubles per-event
-  processing cost and writes a large file
-  (`channels * width * height * HistogramBins * 2` bytes) — leave it off for
+  processing cost and writes a large file (uncompressed,
+  `channels * width * height * HistogramBins * 2` bytes) — leave it off for
   normal/live acquisitions and enable it only when you need to inspect the
   underlying histogram data.
+- **HistogramFileFormat** (default `Compressed 16-bit array (.hist.zst)`) —
+  the format of the **SaveHistograms** file:
+  - `Raw 16-bit array (.hist)` — a headerless native-endian `uint16` array.
+  - `Compressed 16-bit array (.hist.zst)` — the same bytes, compressed as a
+    single [zstd](https://facebook.github.io/zstd/) frame (level 3) (can be
+    decompressed with 7-Zip, PeaZip, or the command-line `zstd` tool).
 
 ### Live image
 
@@ -303,15 +311,23 @@ sample per pixel.
 ### File output
 
 - **SaveTagStream** (default `false`) — when enabled, writes every tag
-  received during the acquisition to `<prefix>_NNNN.ttdump`, in the format
-  written by the vendor SDK's `Dump` measurement (16-byte records; decode
-  with `tools/print_ttdump.py`).
+  received during the acquisition to `<prefix>_NNNN.ttdump` or
+  `<prefix>_NNNN.ttdump.zst`, depending on **TagStreamFileFormat** (decode
+  either with `tools/print_ttdump.py`).
+- **TagStreamFileFormat** (default `Compressed (.ttdump.zst)`) — the format
+  of the **SaveTagStream** file:
+  - `Uncompressed (.ttdump)` — 16-byte records, as written by the vendor
+    SDK's `Dump` measurement.
+  - `Compressed (.ttdump.zst)` — the same bytes, compressed as a single zstd
+    frame (can be decompressed with 7-Zip, PeaZip, or the command-line
+    `zstd` tool).
 - **FileNamePrefix** (default `OpenScan-Swabian`) — path prefix for saved
   files; may include a directory (e.g. `C:/Data/myexperiment`) or be a bare
   name (relative to Micro-Manager's working directory). Each acquisition's
-  actual filenames are `<prefix>_NNNN.ttdump` and `<prefix>_NNNN.hist`,
-  where `NNNN` (0000-9999) is the smallest index not in use by either extension;
-  both files of one acquisition share the index.
+  actual filenames are `<prefix>_NNNN.<ext>`, with the extensions of the
+  selected formats, where `NNNN` (0000-9999) is the smallest index not in
+  use by any of `.ttdump`, `.ttdump.zst`, `.hist`, or `.hist.zst`; all
+  files of one acquisition share the index.
 
 ## Simulate mode details
 

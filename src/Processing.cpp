@@ -1,12 +1,16 @@
 #include "Processing.h"
+#include "ZstdOutputStream.h"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -58,6 +62,42 @@ class FrameSink {
         return tcspc::processor_graph().push_entry_point(this);
     }
 };
+
+inline constexpr int kZstdCompressionLevel = 3;
+
+using plain_file_stream = decltype(tcspc::binary_file_output_stream(
+    std::string(), tcspc::arg::truncate{true}));
+
+// Output stream to a file that is either plain or zstd-compressed, as chosen
+// at run time.
+class FileOutputStream {
+    std::variant<plain_file_stream, ZstdOutputStream<plain_file_stream>> s_;
+
+  public:
+    template <typename Stream>
+    explicit FileOutputStream(Stream stream) : s_(std::move(stream)) {}
+
+    auto is_error() noexcept -> bool {
+        return std::visit([](auto &s) { return s.is_error(); }, s_);
+    }
+
+    auto tell() noexcept -> std::optional<std::uint64_t> {
+        return std::visit([](auto &s) { return s.tell(); }, s_);
+    }
+
+    void write(std::span<std::byte const> buffer) noexcept {
+        std::visit([buffer](auto &s) { s.write(buffer); }, s_);
+    }
+};
+
+FileOutputStream open_file_output(std::string const &name, bool compress) {
+    auto file =
+        tcspc::binary_file_output_stream(name, tcspc::arg::truncate{true});
+    if (compress)
+        return FileOutputStream(
+            ZstdOutputStream(std::move(file), kZstdCompressionLevel));
+    return FileOutputStream(std::move(file));
+}
 
 // Not a valid Time Tagger channel; pads the per-detector-slot arrays.
 constexpr std::int32_t kNoChannel = std::numeric_limits<std::int32_t>::min();
@@ -242,8 +282,9 @@ auto make_processor(ProcessingParams const &params,
         // order, giving (channel, y, x, bin).
         auto writer_inputs = merge_n_unsorted<kMaxDetectors>(
             write_binary_stream(
-                binary_file_output_stream(*params.histogramFileName,
-                                          arg::truncate{true}),
+                open_file_output(*params.histogramFileName,
+                                 params.histogramFileFormat ==
+                                     HistogramFileFormat::HistZst),
                 recycling_bucket_source<std::byte>::create(),
                 arg::granularity<>{sizeof(u16)}));
 
@@ -385,8 +426,9 @@ auto make_processor(ProcessingParams const &params,
                 select<type_list<tag_bucket>>(
                 view_as_bytes(
                 write_binary_stream(
-                    binary_file_output_stream(*params.tagStreamFileName,
-                                              arg::truncate{true}),
+                    open_file_output(*params.tagStreamFileName,
+                                     params.tagStreamFileFormat ==
+                                         TagStreamFileFormat::TTDumpZst),
                     recycling_bucket_source<std::byte>::create(),
                     // Not flushed if the acquisition is halted, so use a
                     // granularity that never leaves bytes buffered.

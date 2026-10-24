@@ -47,7 +47,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 29);
+    REQUIRE(count == 31);
 
     SECTION("the expected settings are present, without duplicates") {
         std::set<std::string> const expected = {
@@ -75,10 +75,12 @@ TEST_CASE("device settings expose the expected names, defaults, and "
             "MaxPhotonPulseWidth_ns",
             "MaxDiffTime_ns",
             "SaveHistograms",
+            "HistogramFileFormat",
             "HistogramBins",
             "HistogramBinWidth_ps",
             "IntensityImagesAreCumulative",
             "SaveTagStream",
+            "TagStreamFileFormat",
             "FileNamePrefix",
         };
         std::set<std::string> got;
@@ -360,6 +362,49 @@ TEST_CASE("device settings expose the expected names, defaults, and "
             CheckOk(OSc_Setting_GetBoolValue(s, &v), "get2 " + name);
             CHECK(v);
             CheckOk(OSc_Setting_SetBoolValue(s, false), "restore " + name);
+        }
+    }
+
+    SECTION("file format settings: names, default, and round-trip") {
+        struct EnumCase {
+            std::string setting;
+            std::vector<std::string> names;
+        };
+        for (EnumCase const &c : {
+                 EnumCase{"HistogramFileFormat",
+                          {"Raw 16-bit array (.hist)",
+                           "Compressed 16-bit array (.hist.zst)"}},
+                 EnumCase{
+                     "TagStreamFileFormat",
+                     {"Uncompressed (.ttdump)", "Compressed (.ttdump.zst)"}},
+             }) {
+            INFO(c.setting);
+            auto *s = FindSetting(settings, count, c.setting);
+            REQUIRE(s != nullptr);
+            OSc_ValueType type;
+            CheckOk(OSc_Setting_GetValueType(s, &type), "type");
+            CHECK(type == OSc_ValueType_Enum);
+
+            uint32_t numValues = 0;
+            CheckOk(OSc_Setting_GetEnumNumValues(s, &numValues), "num");
+            REQUIRE(numValues == c.names.size());
+            for (uint32_t i = 0; i < numValues; ++i) {
+                char buf[OSc_MAX_STR_SIZE];
+                CheckOk(OSc_Setting_GetEnumNameForValue(s, i, buf), "name");
+                CHECK(std::string(buf) == c.names[i]);
+                uint32_t v = 99;
+                CheckOk(OSc_Setting_GetEnumValueForName(s, &v, buf), "value");
+                CHECK(v == i);
+            }
+
+            uint32_t v = 99;
+            CheckOk(OSc_Setting_GetEnumValue(s, &v), "get");
+            CHECK(v == 1); // the .zst format
+
+            CheckOk(OSc_Setting_SetEnumValue(s, 0), "set");
+            CheckOk(OSc_Setting_GetEnumValue(s, &v), "get2");
+            CHECK(v == 0);
+            CheckOk(OSc_Setting_SetEnumValue(s, 1), "restore");
         }
     }
 

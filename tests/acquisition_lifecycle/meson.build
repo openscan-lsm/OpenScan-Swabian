@@ -20,10 +20,12 @@ acquisition_lifecycle_test_exe = executable(
     include_directories: include_directories(
         '../../src/fake_timetagger/include',
         '../../src',
+        '..',
     ),
     dependencies: [
         catch2_with_main_dep,
         libtcspc_dep,
+        libzstd_dep,
     ],
 )
 

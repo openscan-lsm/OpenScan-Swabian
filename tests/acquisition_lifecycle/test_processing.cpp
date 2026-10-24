@@ -4,6 +4,7 @@
 #include "Processing.h"
 #include "ProcessingThread.h"
 #include "TagStreamProcessor.h"
+#include "zstd_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -16,8 +17,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -48,8 +49,9 @@ constexpr channel_t LeadingChannel(std::uint32_t detector) {
     return -(3 + channel_t(detector));
 }
 
-ProcessingParams MakeParams(bool cumulativeIntensity,
-                            std::optional<std::string> histogramFile) {
+ProcessingParams
+MakeParams(bool cumulativeIntensity, std::optional<std::string> histogramFile,
+           HistogramFileFormat histogramFormat = HistogramFileFormat::Hist) {
     ProcessingParams params{
         .width = kWidth,
         .height = kHeight,
@@ -66,7 +68,9 @@ ProcessingParams MakeParams(bool cumulativeIntensity,
         .histogramBins = kBins,
         .histogramBinWidth_ps = kBinWidth,
         .histogramFileName = std::move(histogramFile),
+        .histogramFileFormat = histogramFormat,
         .tagStreamFileName = std::nullopt,
+        .tagStreamFileFormat = TagStreamFileFormat::TTDump,
     };
     for (std::uint32_t i = 0; i < kNumDetectors; ++i)
         params.detectors.push_back({.leadingChannel = LeadingChannel(i),
@@ -155,14 +159,12 @@ RunResult Run(ProcessingParams const &params, std::vector<Tag> const &tags) {
     return result;
 }
 
-std::vector<std::uint16_t> ReadU16File(std::filesystem::path const &path) {
-    std::ifstream file(path, std::ios::binary);
-    REQUIRE(file.good());
-    auto const size = std::filesystem::file_size(path);
-    std::vector<std::uint16_t> data(size / sizeof(std::uint16_t));
-    file.read(
-        reinterpret_cast<char *>(data.data()),
-        static_cast<std::streamsize>(data.size() * sizeof(std::uint16_t)));
+std::vector<std::uint16_t> ReadU16File(std::filesystem::path const &path,
+                                       bool zst) {
+    auto const bytes = test_support::ReadMaybeZstdFile(path, zst);
+    REQUIRE(bytes.size() % sizeof(std::uint16_t) == 0);
+    std::vector<std::uint16_t> data(bytes.size() / sizeof(std::uint16_t));
+    std::memcpy(data.data(), bytes.data(), bytes.size());
     return data;
 }
 
@@ -228,13 +230,20 @@ TEST_CASE("Saved histogram is the acquisition total, laid out by channel, "
           "pixel, and bin",
           "[processing]") {
     bool const cumulativeIntensity = GENERATE(false, true);
+    auto const format =
+        GENERATE(HistogramFileFormat::Hist, HistogramFileFormat::HistZst);
+    bool const zst = format == HistogramFileFormat::HistZst;
     INFO("cumulativeIntensity = " << cumulativeIntensity);
-    std::filesystem::path const file = std::filesystem::temp_directory_path() /
-                                       "openscan-swabian-test-processing.hist";
+    INFO("zst = " << zst);
+    std::filesystem::path const file =
+        std::filesystem::temp_directory_path() /
+        (zst ? "openscan-swabian-test-processing.hist.zst"
+             : "openscan-swabian-test-processing.hist");
     std::filesystem::remove(file);
 
-    auto const result = Run(MakeParams(cumulativeIntensity, file.string()),
-                            MakeTags(kPhotons));
+    auto const result =
+        Run(MakeParams(cumulativeIntensity, file.string(), format),
+            MakeTags(kPhotons));
     CHECK(result.outcome == ProcessingThread::Outcome::Completed);
 
     std::vector<std::uint16_t> expected(kNumDetectors * kNumPixels * kBins);
@@ -242,8 +251,6 @@ TEST_CASE("Saved histogram is the acquisition total, laid out by channel, "
         ++expected[(p.detector * kNumPixels + PixelIndex(p)) * kBins +
                    std::size_t(p.bin)];
 
-    REQUIRE(std::filesystem::file_size(file) ==
-            expected.size() * sizeof(std::uint16_t));
-    CHECK(ReadU16File(file) == expected);
+    CHECK(ReadU16File(file, zst) == expected);
     std::filesystem::remove(file);
 }

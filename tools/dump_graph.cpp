@@ -40,7 +40,9 @@ int main(int argc, char *argv[]) {
         .histogramBins = 256,
         .histogramBinWidth_ps = 50,
         .histogramFileName = {},
+        .histogramFileFormat = HistogramFileFormat::HistZst,
         .tagStreamFileName = {},
+        .tagStreamFileFormat = TagStreamFileFormat::TTDumpZst,
     };
     int numDetectors = 1;
 

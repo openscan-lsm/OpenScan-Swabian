@@ -3,6 +3,9 @@
 #include <zstd.h>
 
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <ios>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -33,6 +36,20 @@ inline std::vector<std::byte> ZstdDecompress(std::span<std::byte const> src) {
             throw std::runtime_error("truncated zstd stream");
     } while (ret != 0 || in.pos < in.size);
     return result;
+}
+
+// Reads a whole file, decompressing it if zst is true.
+inline std::vector<std::byte>
+ReadMaybeZstdFile(std::filesystem::path const &path, bool zst) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+        throw std::runtime_error("cannot open " + path.string());
+    std::vector<std::byte> bytes(std::filesystem::file_size(path));
+    file.read(reinterpret_cast<char *>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!file)
+        throw std::runtime_error("cannot read " + path.string());
+    return zst ? ZstdDecompress(bytes) : bytes;
 }
 
 } // namespace test_support

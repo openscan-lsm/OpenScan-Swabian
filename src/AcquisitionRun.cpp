@@ -12,6 +12,26 @@
 
 namespace {
 
+std::string Extension(HistogramFileFormat format) {
+    switch (format) {
+    case HistogramFileFormat::Hist:
+        return ".hist";
+    case HistogramFileFormat::HistZst:
+        return ".hist.zst";
+    }
+    throw std::logic_error("Invalid histogram file format");
+}
+
+std::string Extension(TagStreamFileFormat format) {
+    switch (format) {
+    case TagStreamFileFormat::TTDump:
+        return ".ttdump";
+    case TagStreamFileFormat::TTDumpZst:
+        return ".ttdump.zst";
+    }
+    throw std::logic_error("Invalid tag stream file format");
+}
+
 ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
                                       OScDev_Acquisition *acq) {
     uint32_t x, y, width, height;
@@ -35,7 +55,9 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .histogramBins = data->histogramBins,
         .histogramBinWidth_ps = data->histogramBinWidth_ps,
         .histogramFileName = std::nullopt,
+        .histogramFileFormat = data->histogramFileFormat,
         .tagStreamFileName = std::nullopt,
+        .tagStreamFileFormat = data->tagStreamFileFormat,
     };
     for (DetectorConfig const &d : config.detectors)
         params.detectors.push_back(
@@ -43,18 +65,22 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
 
     // File names follow OpenScan-BH_SPC's scheme (FileNamePrefix setting
     // + "_NNNN" index shared by all output files); see UniqueFileName.h.
+    // Every format's extension is checked, so that an index is never reused.
     if (data->saveHistograms || data->saveTagStream) {
         std::optional<std::string> const uniqueName =
-            UniqueFileName(data->fileNamePrefix, {".ttdump", ".hist"});
+            UniqueFileName(data->fileNamePrefix,
+                           {".ttdump", ".ttdump.zst", ".hist", ".hist.zst"});
         if (!uniqueName)
             throw std::runtime_error(
                 "Could not find a unique file name for output files "
                 "(prefix '" +
                 data->fileNamePrefix + "')");
         if (data->saveHistograms)
-            params.histogramFileName = *uniqueName + ".hist";
+            params.histogramFileName =
+                *uniqueName + Extension(data->histogramFileFormat);
         if (data->saveTagStream)
-            params.tagStreamFileName = *uniqueName + ".ttdump";
+            params.tagStreamFileName =
+                *uniqueName + Extension(data->tagStreamFileFormat);
     }
 
     return params;
