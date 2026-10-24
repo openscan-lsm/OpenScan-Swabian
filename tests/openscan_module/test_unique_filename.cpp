@@ -45,7 +45,7 @@ TEST_CASE("UniqueFileName picks _0000 in an empty directory",
     ScratchDir dir;
     std::string const prefix = dir.Prefix("acq");
 
-    auto const result = UniqueFileName(prefix, {".raw"});
+    auto const result = UniqueFileName(prefix, {".ttdump"});
     REQUIRE(result.has_value());
     CHECK(*result == prefix + "_0000");
 }
@@ -55,10 +55,10 @@ TEST_CASE("UniqueFileName skips indices whose file already exists",
     ScratchDir dir;
     std::string const prefix = dir.Prefix("acq");
 
-    dir.Touch(prefix + "_0000", ".raw");
-    dir.Touch(prefix + "_0001", ".raw");
+    dir.Touch(prefix + "_0000", ".ttdump");
+    dir.Touch(prefix + "_0001", ".ttdump");
 
-    auto const result = UniqueFileName(prefix, {".raw"});
+    auto const result = UniqueFileName(prefix, {".ttdump"});
     REQUIRE(result.has_value());
     CHECK(*result == prefix + "_0002");
 }
@@ -72,7 +72,7 @@ TEST_CASE("UniqueFileName shares one index across multiple extensions",
     // still be enough to skip it, since either extension colliding counts.
     dir.Touch(prefix + "_0000", ".json");
 
-    auto const result = UniqueFileName(prefix, {".raw", ".json"});
+    auto const result = UniqueFileName(prefix, {".ttdump", ".json"});
     REQUIRE(result.has_value());
     CHECK(*result == prefix + "_0001");
 }
@@ -80,9 +80,9 @@ TEST_CASE("UniqueFileName shares one index across multiple extensions",
 TEST_CASE("UniqueFileName is unaffected by an unrelated prefix",
           "[UniqueFileName]") {
     ScratchDir dir;
-    dir.Touch(dir.Prefix("other") + "_0000", ".raw");
+    dir.Touch(dir.Prefix("other") + "_0000", ".ttdump");
 
-    auto const result = UniqueFileName(dir.Prefix("acq"), {".raw"});
+    auto const result = UniqueFileName(dir.Prefix("acq"), {".ttdump"});
     REQUIRE(result.has_value());
     CHECK(*result == dir.Prefix("acq") + "_0000");
 }
@@ -94,9 +94,9 @@ TEST_CASE("UniqueFileName returns nullopt once all 10000 indices are taken",
     for (int i = 0; i < 10000; ++i) {
         char suffix[8];
         std::snprintf(suffix, sizeof(suffix), "_%04d", i);
-        dir.Touch(prefix + suffix, ".raw");
+        dir.Touch(prefix + suffix, ".ttdump");
     }
 
-    auto const result = UniqueFileName(prefix, {".raw"});
+    auto const result = UniqueFileName(prefix, {".ttdump"});
     CHECK_FALSE(result.has_value());
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a raw Swabian Time Tagger tag dump in a human-readable form.
+"""Print a Time Tagger tag stream dump (.ttdump) in a human-readable form.
 
 Reads the file format produced by the vendor SDK's `Dump` measurement
 (driver/include/measurements/Dump.h): a sequence of 16-byte (128-bit)
@@ -18,11 +18,20 @@ Record layout (little-endian), from the `Tag` struct in TimeTagger.h:
                                           positive = rising, negative =
                                           falling)
     offset 8   8 bytes  time            (int64, picoseconds)
+
+Files ending in .zst (.ttdump.zst) are decompressed while reading.
+
+Requires Python 3.14+ (for compression.zstd).
 """
 
-import argparse
-import struct
 import sys
+
+if sys.version_info < (3, 14):
+    sys.exit("print_ttdump.py requires Python 3.14+")
+
+import argparse
+import compression.zstd
+import struct
 
 RECORD_SIZE = 16
 RECORD_FORMAT = "<BBHiq"  # type, reserved, missed_events, channel, time
@@ -55,49 +64,51 @@ def format_record(index, tag_type, reserved, missed_events, channel, time_ps):
     return line
 
 
-def dump_tags(path, max_tags, out):
-    with open(path, "rb") as f:
-        data = f.read()
+def open_ttdump(path):
+    # ZstdFile decompresses incrementally, so it does not need the frame
+    # header to record the content size (ours never do).
+    if path.endswith(".zst"):
+        return compression.zstd.open(path, "rb")
+    return open(path, "rb")
 
-    extra_bytes = len(data) % RECORD_SIZE
-    if extra_bytes:
-        print(
-            f"warning: file size {len(data)} is not a multiple of "
-            f"{RECORD_SIZE} bytes; ignoring trailing {extra_bytes} byte(s) "
-            "(truncated or not a raw tag dump?)",
-            file=sys.stderr,
-        )
 
-    total_records = len(data) // RECORD_SIZE
-    printed = 0
-    for index in range(total_records):
-        if max_tags is not None and printed >= max_tags:
-            print(f"... stopped after {max_tags} tag(s); "
-                  f"{total_records - index} more in file", file=out)
-            break
+def print_ttdump(path, max_tags, out):
+    index = 0
+    with open_ttdump(path) as f:
+        while max_tags is None or index < max_tags:
+            record = f.read(RECORD_SIZE)
+            if len(record) < RECORD_SIZE:
+                if record:
+                    print(
+                        f"warning: ignoring trailing {len(record)} byte(s) "
+                        f"after {index} complete {RECORD_SIZE}-byte "
+                        "record(s) (truncated or not a tag stream dump "
+                        "(.ttdump)?)",
+                        file=sys.stderr,
+                    )
+                break
+            tag_type, reserved, missed_events, channel, time_ps = \
+                struct.unpack(RECORD_FORMAT, record)
+            print(format_record(index, tag_type, reserved, missed_events,
+                                channel, time_ps), file=out)
+            index += 1
+        else:
+            print(f"... stopped after {max_tags} tag(s)", file=out)
+            return
 
-        offset = index * RECORD_SIZE
-        record = data[offset:offset + RECORD_SIZE]
-        tag_type, reserved, missed_events, channel, time_ps = \
-            struct.unpack(RECORD_FORMAT, record)
-        print(format_record(index, tag_type, reserved, missed_events,
-                             channel, time_ps), file=out)
-        printed += 1
-
-    print(f"\n{printed} tag(s) printed, {total_records} total in file",
-          file=out)
+    print(f"\n{index} tag(s) printed (end of file)", file=out)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file", help="raw tag dump file (from Dump())")
+    parser.add_argument("file", help="tag stream dump (.ttdump) file")
     parser.add_argument(
         "-n", "--max-tags", type=int, default=None,
         help="stop after printing this many tags (default: print all)",
     )
     args = parser.parse_args()
 
-    dump_tags(args.file, args.max_tags, sys.stdout)
+    print_ttdump(args.file, args.max_tags, sys.stdout)
 
 
 if __name__ == "__main__":

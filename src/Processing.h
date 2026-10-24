@@ -19,6 +19,9 @@ inline constexpr char kTagBufferTrackerName[] = "tag_buffer";
 
 inline constexpr std::size_t kMaxDetectors = 4;
 
+enum class HistogramFileFormat { Hist, HistZst };
+enum class TagStreamFileFormat { TTDump, TTDumpZst };
+
 struct DetectorChannels {
     std::int32_t leadingChannel;
     std::int32_t trailingChannel;
@@ -46,8 +49,10 @@ struct ProcessingParams {
     std::int32_t histogramBinWidth_ps;
 
     // Files are written only if the name is set.
-    std::optional<std::string> histogramDumpFileName;
-    std::optional<std::string> rawDataFileName;
+    std::optional<std::string> histogramFileName;
+    HistogramFileFormat histogramFileFormat;
+    std::optional<std::string> tagStreamFileName;
+    TagStreamFileFormat tagStreamFileFormat;
 };
 
 // Receives one u16 sample per pixel (width * height), valid only for the

@@ -1,12 +1,16 @@
 #include "Processing.h"
+#include "ZstdOutputStream.h"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -58,6 +62,42 @@ class FrameSink {
         return tcspc::processor_graph().push_entry_point(this);
     }
 };
+
+inline constexpr int kZstdCompressionLevel = 3;
+
+using plain_file_stream = decltype(tcspc::binary_file_output_stream(
+    std::string(), tcspc::arg::truncate{true}));
+
+// Output stream to a file that is either plain or zstd-compressed, as chosen
+// at run time.
+class FileOutputStream {
+    std::variant<plain_file_stream, ZstdOutputStream<plain_file_stream>> s_;
+
+  public:
+    template <typename Stream>
+    explicit FileOutputStream(Stream stream) : s_(std::move(stream)) {}
+
+    auto is_error() noexcept -> bool {
+        return std::visit([](auto &s) { return s.is_error(); }, s_);
+    }
+
+    auto tell() noexcept -> std::optional<std::uint64_t> {
+        return std::visit([](auto &s) { return s.tell(); }, s_);
+    }
+
+    void write(std::span<std::byte const> buffer) noexcept {
+        std::visit([buffer](auto &s) { s.write(buffer); }, s_);
+    }
+};
+
+FileOutputStream open_file_output(std::string const &name, bool compress) {
+    auto file =
+        tcspc::binary_file_output_stream(name, tcspc::arg::truncate{true});
+    if (compress)
+        return FileOutputStream(
+            ZstdOutputStream(std::move(file), kZstdCompressionLevel));
+    return FileOutputStream(std::move(file));
+}
 
 // Not a valid Time Tagger channel; pads the per-detector-slot arrays.
 constexpr std::int32_t kNoChannel = std::numeric_limits<std::int32_t>::min();
@@ -121,7 +161,7 @@ auto pair_pulses(slot_channels const &leading, slot_channels const &trailing,
 }
 
 // Full per-pixel histogram (histogramBins bins/pixel) -- written to disk as
-// raw u16, not sent to the frame callback (which has no way to receive a
+// u16, not sent to the frame callback (which has no way to receive a
 // per-pixel histogram cube -- see FrameSink's comment above). Accumulates
 // over the whole acquisition and emits the array's bytes to downstream once,
 // on flush.
@@ -223,18 +263,18 @@ auto make_processor(ProcessingParams const &params,
     }));
 
     // The full per-pixel histogram (histogramBins bins/pixel, written to
-    // disk) is only useful when a dump file name
+    // disk) is only useful when a histogram file name
     // was given. Broadcasting every time-correlated event
     // to it as well as to live_route roughly doubles consumer-side
     // per-event work (map_to_datapoints -> map_to_bins ->
     // cluster_bin_increments -> scan_histograms, all over again, plus the
-    // dump itself), for no benefit when nobody's consuming it. So it's
+    // file writing itself), for no benefit when nobody's consuming it. So it's
     // built -- and the broadcast exists at all -- only inside this branch;
     // otherwise, tc_downstream is just live_route,
     // type-erased to the same interface so both arms of the branch have a
     // common type to hand to merge() below.
     tc_processor tc_downstream = [&]() -> tc_processor {
-        if (!params.histogramDumpFileName)
+        if (!params.histogramFileName)
             return tc_processor(std::move(live_route));
 
         // All slots write to one file. Each slot's concluding array is
@@ -242,13 +282,14 @@ auto make_processor(ProcessingParams const &params,
         // order, giving (channel, y, x, bin).
         auto writer_inputs = merge_n_unsorted<kMaxDetectors>(
             write_binary_stream(
-                binary_file_output_stream(*params.histogramDumpFileName,
-                                          arg::truncate{true}),
+                open_file_output(*params.histogramFileName,
+                                 params.histogramFileFormat ==
+                                     HistogramFileFormat::HistZst),
                 recycling_bucket_source<std::byte>::create(),
                 arg::granularity<>{sizeof(u16)}));
 
         // Full per-pixel TCSPC histogram (histogramBins bins of
-        // histogramBinWidth_ps) -- debug-dumped to disk, not sent to the
+        // histogramBinWidth_ps) -- written to disk, not sent to the
         // frame callback.
         auto full_route = route_to_slots(make_slots<tc_processor>([&](std::size_t i) {
             // Unused slots still forward flush, so that the writer is
@@ -374,19 +415,20 @@ auto make_processor(ProcessingParams const &params,
     // records in the vendor SDK's Dump format.
     type_erased_processor<buffered_event_list> bucket_downstream =
         [&]() -> type_erased_processor<buffered_event_list> {
-        if (!params.rawDataFileName)
+        if (!params.tagStreamFileName)
             return type_erased_processor<buffered_event_list>(
                 std::move(unbatched_chain));
 
         return type_erased_processor<buffered_event_list>(
             broadcast<buffered_event_list>(
-                // Only the tags go to the raw file (view_as_bytes would
+                // Only the tags go to the file (view_as_bytes would
                 // otherwise serialize the time_reached_event too).
                 select<type_list<tag_bucket>>(
                 view_as_bytes(
                 write_binary_stream(
-                    binary_file_output_stream(*params.rawDataFileName,
-                                              arg::truncate{true}),
+                    open_file_output(*params.tagStreamFileName,
+                                     params.tagStreamFileFormat ==
+                                         TagStreamFileFormat::TTDumpZst),
                     recycling_bucket_source<std::byte>::create(),
                     // Not flushed if the acquisition is halted, so use a
                     // granularity that never leaves bytes buffered.

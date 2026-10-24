@@ -4,14 +4,15 @@
 // checks that a real frame of "reasonable" data comes back.
 
 #include "device_test_support.hpp"
+#include "zstd_test_support.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
 // Only for the Tag struct and the fake's channel/period constants, to decode
-// the raw dump byte-for-byte in the same layout Processing.cpp wrote it and
-// to set SyncDelay_ns to the fake's sync period -- this test otherwise
+// the .ttdump file byte-for-byte in the same layout Processing.cpp wrote it
+// and to set SyncDelay_ns to the fake's sync period -- this test otherwise
 // only drives the module through the public OpenScanLib API, like every
 // other test in this directory.
 #include <TimeTagger.h>
@@ -20,8 +21,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <functional>
 #include <map>
 #include <numeric>
@@ -73,6 +74,16 @@ void SetInt32(OSc_Setting **settings, size_t count, std::string const &name,
     CheckOk(
         OSc_Setting_SetInt32Value(FindSetting(settings, count, name), value),
         "set " + name);
+}
+
+void SetEnum(OSc_Setting **settings, size_t count, std::string const &name,
+             std::string const &valueName) {
+    OSc_Setting *setting = FindSetting(settings, count, name);
+    uint32_t value = 0;
+    CheckOk(
+        OSc_Setting_GetEnumValueForName(setting, &value, valueName.c_str()),
+        "get value for " + valueName);
+    CheckOk(OSc_Setting_SetEnumValue(setting, value), "set " + name);
 }
 
 // Restores the detector settings that tests in this file may change.
@@ -278,22 +289,24 @@ TEST_CASE("IntensityImagesAreCumulative delivers one image per frame, each "
     RestoreSharedSettings(run);
 }
 
-TEST_CASE("SaveRawData writes every registered channel (both photon and "
-          "line clock edges, but only the configured sync edge) to a .raw "
-          "dump, with the conditional filter applied to the sync",
+TEST_CASE("SaveTagStream writes every registered channel (both photon and "
+          "line clock edges, but only the configured sync edge) to a "
+          ".ttdump file, with the conditional filter applied to the sync",
           "[acquisition][slow]") {
+    bool const zst = GENERATE(false, true);
+    INFO("zst = " << zst);
     LSMFixture fx;
 
-    // Route the dump into a scratch directory so we know exactly where to
-    // find (and can clean up) the resulting file
+    // Route the tag stream into a scratch directory so we know exactly where
+    // to find (and can clean up) the resulting file
     std::filesystem::path const scratch_dir =
         std::filesystem::temp_directory_path() /
-        "openscan-swabian-raw-dump-test";
+        "openscan-swabian-tag-stream-test";
     std::filesystem::remove_all(scratch_dir);
     std::filesystem::create_directories(scratch_dir);
     std::string const prefix = (scratch_dir / "acq").string();
 
-    // This test only inspects the raw dump file, not the delivered image,
+    // This test only inspects the tag stream file, not the delivered image,
     // so the capture just needs to exist as a valid callback target.
     FrameCapture capture;
     capture.width = kResolution;
@@ -305,16 +318,19 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
                         FindSetting(settings, settingCount, "FileNamePrefix"),
                         prefix.c_str()),
                     "set FileNamePrefix");
-            CheckOk(
-                OSc_Setting_SetBoolValue(
-                    FindSetting(settings, settingCount, "SaveRawData"), true),
-                "set SaveRawData");
+            CheckOk(OSc_Setting_SetBoolValue(
+                        FindSetting(settings, settingCount, "SaveTagStream"),
+                        true),
+                    "set SaveTagStream");
+            SetEnum(settings, settingCount, "TagStreamFileFormat",
+                    zst ? "Compressed (.ttdump.zst)"
+                        : "Uncompressed (.ttdump)");
         });
 
     // Reaching the requested frame count only calls finish_running()
     // (IteratorBase stops polling for more data); it deliberately does NOT
     // flush the pipeline -- see IteratorBase::finish_running()'s own
-    // comment in TimeTagger.h. The raw data file is only closed once
+    // comment in TimeTagger.h. The tag stream file is only closed once
     // something actually stops the acquisition: TimeTagger.cpp's Stop()
     // resets the AcquisitionRun, whose destructor stops the measurement,
     // halts and joins the processing thread, then destroys the graph
@@ -326,14 +342,15 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);
 
-    // UniqueFileName() (src/UniqueFileName.cpp) picks "<prefix>_0000.raw"
-    // for the first file at a fresh prefix -- this scratch directory was
-    // just created above, so that's the only file that can exist here.
-    std::filesystem::path const raw_file = prefix + "_0000.raw";
-    REQUIRE(std::filesystem::exists(raw_file));
+    // UniqueFileName() (src/UniqueFileName.cpp) picks index 0000 for the
+    // first file at a fresh prefix -- this scratch directory was just
+    // created above, so that's the only file that can exist here.
+    std::filesystem::path const ttdump_file =
+        prefix + (zst ? "_0000.ttdump.zst" : "_0000.ttdump");
+    REQUIRE(std::filesystem::exists(ttdump_file));
 
-    std::ifstream file(raw_file, std::ios::binary);
-    REQUIRE(file.good());
+    auto const bytes = ReadMaybeZstdFile(ttdump_file, zst);
+    CHECK(bytes.size() % sizeof(Tag) == 0);
     bool sawRisingLineClock = false;
     bool sawFallingLineClock = false;
     bool sawRisingSync = false;
@@ -344,8 +361,10 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
     // edge between them (the fake models the filter; see its PumpLoop).
     bool syncPending = false;
     bool sawConsecutiveSyncs = false;
-    Tag tag;
-    while (file.read(reinterpret_cast<char *>(&tag), sizeof(Tag))) {
+    for (size_t offset = 0; offset + sizeof(Tag) <= bytes.size();
+         offset += sizeof(Tag)) {
+        Tag tag;
+        std::memcpy(&tag, bytes.data() + offset, sizeof(Tag));
         if (tag.channel == LINE_CLOCK_CHANNEL)
             sawRisingLineClock = true;
         else if (tag.channel == -LINE_CLOCK_CHANNEL)
@@ -372,17 +391,18 @@ TEST_CASE("SaveRawData writes every registered channel (both photon and "
     CHECK(sawRisingPhoton);
     CHECK(sawFallingPhoton);
     CHECK_FALSE(sawConsecutiveSyncs);
-    file.close();
     std::filesystem::remove_all(scratch_dir);
 
     // Restore what this test mutated on the shared device (see
     // device_test_support.hpp's Environment comment) -- otherwise these
     // stick around for every later test case in this binary,
     // test_device_settings.cpp's default-value checks included.
-    CheckOk(
-        OSc_Setting_SetBoolValue(
-            FindSetting(run.settings, run.settingCount, "SaveRawData"), false),
-        "restore SaveRawData");
+    CheckOk(OSc_Setting_SetBoolValue(
+                FindSetting(run.settings, run.settingCount, "SaveTagStream"),
+                false),
+            "restore SaveTagStream");
+    SetEnum(run.settings, run.settingCount, "TagStreamFileFormat",
+            "Compressed (.ttdump.zst)");
     CheckOk(OSc_Setting_SetStringValue(
                 FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
                 "OpenScan-Swabian"),
@@ -404,13 +424,12 @@ struct HistogramFile {
 constexpr uint32_t kHistNumFrames = 2;
 
 // With twoDetectors, Detector1 (input -4) is enabled in addition to
-// Detector0.
-HistogramFile AcquireHistogramFile(bool twoDetectors) {
+// Detector0. With zst, the .hist.zst format is selected instead of .hist.
+HistogramFile AcquireHistogramFile(bool twoDetectors, bool zst) {
     LSMFixture fx;
 
     std::filesystem::path const scratch_dir =
-        std::filesystem::temp_directory_path() /
-        "openscan-swabian-hist-dump-test";
+        std::filesystem::temp_directory_path() / "openscan-swabian-hist-test";
     std::filesystem::remove_all(scratch_dir);
     std::filesystem::create_directories(scratch_dir);
     std::string const prefix = (scratch_dir / "acq").string();
@@ -435,10 +454,13 @@ HistogramFile AcquireHistogramFile(bool twoDetectors) {
                         &bins),
                     "get HistogramBins");
             SetBool(settings, settingCount, "EnableDetector1", twoDetectors);
+            SetEnum(settings, settingCount, "HistogramFileFormat",
+                    zst ? "Compressed 16-bit array (.hist.zst)"
+                        : "Raw 16-bit array (.hist)");
         });
 
     // The file stays open until the acquisition is stopped; see the
-    // SaveRawData test above.
+    // SaveTagStream test above.
     CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
 
     OSc_Acquisition_Destroy(run.acq);
@@ -448,15 +470,13 @@ HistogramFile AcquireHistogramFile(bool twoDetectors) {
     result.elementsPerArray = static_cast<size_t>(run.width) * run.height *
                               static_cast<size_t>(bins);
 
-    std::filesystem::path const hist_file = prefix + "_0000.hist";
+    std::filesystem::path const hist_file =
+        prefix + (zst ? "_0000.hist.zst" : "_0000.hist");
     REQUIRE(std::filesystem::exists(hist_file));
-    auto const size = std::filesystem::file_size(hist_file);
-    REQUIRE(size % sizeof(std::uint16_t) == 0);
-    result.data.resize(size / sizeof(std::uint16_t));
-    std::ifstream file(hist_file, std::ios::binary);
-    REQUIRE(file.read(reinterpret_cast<char *>(result.data.data()),
-                      static_cast<std::streamsize>(size)));
-    file.close();
+    auto const bytes = ReadMaybeZstdFile(hist_file, zst);
+    REQUIRE(bytes.size() % sizeof(std::uint16_t) == 0);
+    result.data.resize(bytes.size() / sizeof(std::uint16_t));
+    std::memcpy(result.data.data(), bytes.data(), bytes.size());
     std::filesystem::remove_all(scratch_dir);
 
     // Restore what this test mutated on the shared device (see
@@ -465,6 +485,8 @@ HistogramFile AcquireHistogramFile(bool twoDetectors) {
                 FindSetting(run.settings, run.settingCount, "SaveHistograms"),
                 false),
             "restore SaveHistograms");
+    SetEnum(run.settings, run.settingCount, "HistogramFileFormat",
+            "Compressed 16-bit array (.hist.zst)");
     CheckOk(OSc_Setting_SetStringValue(
                 FindSetting(run.settings, run.settingCount, "FileNamePrefix"),
                 "OpenScan-Swabian"),
@@ -483,9 +505,11 @@ std::uint64_t Sum(std::vector<std::uint16_t>::const_iterator begin,
 } // namespace
 
 TEST_CASE("SaveHistograms writes a single histogram array, the sum of all "
-          "frames, to a .hist file",
+          "frames, to a .hist or .hist.zst file",
           "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(false);
+    bool const zst = GENERATE(false, true);
+    INFO("zst = " << zst);
+    HistogramFile const hist = AcquireHistogramFile(false, zst);
     CHECK(hist.data.size() == hist.elementsPerArray);
     CHECK(Sum(hist.data.begin(), hist.data.end()) > 0);
 }
@@ -493,7 +517,7 @@ TEST_CASE("SaveHistograms writes a single histogram array, the sum of all "
 TEST_CASE("SaveHistograms with two detectors writes a histogram array per "
           "detector",
           "[acquisition][slow]") {
-    HistogramFile const hist = AcquireHistogramFile(true);
+    HistogramFile const hist = AcquireHistogramFile(true, true);
     size_t const numArrays = 2;
     REQUIRE(hist.data.size() == numArrays * hist.elementsPerArray);
     for (size_t i = 0; i < numArrays; ++i) {

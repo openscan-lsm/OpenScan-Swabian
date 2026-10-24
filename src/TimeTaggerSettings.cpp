@@ -8,8 +8,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <iterator>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -43,6 +45,56 @@ template <auto Access> class BoolSetting {
     static inline OScDev_SettingImpl impl = {
         .GetBool = Get,
         .SetBool = Set,
+    };
+};
+
+// Names is an array of value names, indexed by the enum's underlying value.
+template <auto Access, auto const &Names> class EnumSetting {
+    using EnumType = std::remove_reference_t<decltype(Access(
+        std::declval<TimeTagger_PrivateData &>()))>;
+
+    static OScDev_Error Get(OScDev_Setting *setting, uint32_t *value) {
+        *value = static_cast<uint32_t>(Access(*GetSettingDeviceData(setting)));
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, uint32_t value) {
+        if (value >= std::size(Names))
+            return OScDev_Error_ReturnAsCode(
+                OScDev_Error_Create("Enum value out of range"));
+        Access(*GetSettingDeviceData(setting)) = static_cast<EnumType>(value);
+        return OScDev_OK;
+    }
+    static OScDev_Error GetNumValues(OScDev_Setting *, uint32_t *count) {
+        *count = static_cast<uint32_t>(std::size(Names));
+        return OScDev_OK;
+    }
+    static OScDev_Error GetNameForValue(OScDev_Setting *, uint32_t value,
+                                        char *name) {
+        if (value >= std::size(Names))
+            return OScDev_Error_ReturnAsCode(
+                OScDev_Error_Create("Enum value out of range"));
+        strncpy_s(name, OScDev_MAX_STR_SIZE, Names[value], _TRUNCATE);
+        return OScDev_OK;
+    }
+    static OScDev_Error GetValueForName(OScDev_Setting *, uint32_t *value,
+                                        const char *name) {
+        for (std::size_t i = 0; i < std::size(Names); ++i) {
+            if (std::strcmp(Names[i], name) == 0) {
+                *value = static_cast<uint32_t>(i);
+                return OScDev_OK;
+            }
+        }
+        return OScDev_Error_ReturnAsCode(OScDev_Error_Create(
+            (std::string("Unknown enum value name: ") + name).c_str()));
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetEnum = Get,
+        .SetEnum = Set,
+        .GetEnumNumValues = GetNumValues,
+        .GetEnumNameForValue = GetNameForValue,
+        .GetEnumValueForName = GetValueForName,
     };
 };
 
@@ -330,6 +382,16 @@ namespace {
 
 using PD = TimeTagger_PrivateData;
 
+constexpr char const *kHistogramFileFormatNames[] = {
+    "Raw 16-bit array (.hist)",
+    "Compressed 16-bit array (.hist.zst)",
+};
+
+constexpr char const *kTagStreamFileFormatNames[] = {
+    "Uncompressed (.ttdump)",
+    "Compressed (.ttdump.zst)",
+};
+
 struct SettingEntry {
     std::string name;
     OScDev_ValueType type;
@@ -385,14 +447,20 @@ std::vector<SettingEntry> MakeSettingEntries() {
                                 PositiveNsRange>::impl},
             {"SaveHistograms", OScDev_ValueType_Bool,
              &BoolSetting<&Field<&PD::saveHistograms>>::impl},
+            {"HistogramFileFormat", OScDev_ValueType_Enum,
+             &EnumSetting<&Field<&PD::histogramFileFormat>,
+                          kHistogramFileFormatNames>::impl},
             {"HistogramBins", OScDev_ValueType_Int32,
              &HistogramBinsSetting::impl},
             {"HistogramBinWidth_ps", OScDev_ValueType_Int32,
              &HistogramBinWidthSetting::impl},
             {"IntensityImagesAreCumulative", OScDev_ValueType_Bool,
              &BoolSetting<&Field<&PD::intensityImagesAreCumulative>>::impl},
-            {"SaveRawData", OScDev_ValueType_Bool,
-             &BoolSetting<&Field<&PD::saveRawData>>::impl},
+            {"SaveTagStream", OScDev_ValueType_Bool,
+             &BoolSetting<&Field<&PD::saveTagStream>>::impl},
+            {"TagStreamFileFormat", OScDev_ValueType_Enum,
+             &EnumSetting<&Field<&PD::tagStreamFileFormat>,
+                          kTagStreamFileFormatNames>::impl},
             {"FileNamePrefix", OScDev_ValueType_String,
              &FileNamePrefixSetting::impl},
         });

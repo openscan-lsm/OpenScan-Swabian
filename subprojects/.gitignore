@@ -6,3 +6,4 @@
 !/OpenScanLib.wrap
 !/catch2.wrap
 !/libtcspc.wrap
+!/zstd.wrap

@@ -7,7 +7,7 @@ microscopy TCSPC (time-correlated single-photon counting) acquisitions,
 usable from [Micro-Manager](https://micro-manager.org/) via OpenScan's LSM
 device.
 
-The module reads raw event tags from the Time Tagger (sync, line clock, and
+The module reads time tags from the Time Tagger (sync, line clock, and
 up to 4 detector inputs), correlates photons against sync pulses, bins them
 per pixel using a [libtcspc](https://github.com/marktsuchida/libtcspc)
 processing pipeline, and delivers each frame to OpenScanLib as a
@@ -19,13 +19,13 @@ conventional 16-bit image per detector.
   — the `OScDev_DeviceImpl` device module itself: device lifecycle
   (`Open`/`Close`/`Arm`/`Start`/`Stop`/`IsRunning`/`Wait`) and the settings
   described below.
-- `src/Processing.cpp`/`.h` — the libtcspc processing graph: decodes raw
+- `src/Processing.cpp`/`.h` — the libtcspc processing graph: decodes
   tags, pairs sync/photon detections, derives per-pixel timing windows from
   the line clock, bins photons into per-pixel histograms, and delivers
   frames.
 - `src/AcquisitionRun.*`, `src/TagStreamMeasurement.*`,
   `src/TagStreamProcessor.*`, `src/ProcessingThread.*` — the acquisition
-  lifecycle: the SDK measurement that delivers raw tags, the thread that
+  lifecycle: the SDK measurement that delivers tags, the thread that
   pumps the processing graph, and the object that owns them for one armed
   acquisition.
 - `src/fake_timetagger/` — a from-scratch, header-only fake of the vendor
@@ -34,9 +34,10 @@ conventional 16-bit image per detector.
   unmodified against the real SDK headers. It also synthesizes plausible
   sync/photon/line-clock activity so the pipeline has something to process
   without real hardware attached.
-- `tools/dump_tags.py` — decodes a raw Time Tagger tag dump (the format
-  written by the SDK's `Dump` measurement, and by this module's own
-  `SaveRawData` setting) into human-readable text.
+- `tools/print_ttdump.py` — decodes a tag stream file (`.ttdump`, the
+  format written by the SDK's `Dump` measurement and by this module's own
+  `SaveTagStream` setting, or `.ttdump.zst`) into human-readable text.
+  Requires Python 3.14+.
 - `tools/dump_graph.cpp` — the `dump_graph` executable, which prints the
   libtcspc processing graph (built by the same `MakeProcessingPipeline` the
   module uses) in Graphviz dot format. See
@@ -97,11 +98,11 @@ meson selects, based on the `simulate` option.
 The build also produces `dump_graph.exe`, which prints the processing graph
 in Graphviz dot format. The graph's shape depends on the cumulative
 intensity and file output settings, selected with `--cumulative-intensity`,
-`--histogram-dump`, and `--raw-data`, and on the number of detectors,
+`--histogram-file`, and `--tag-stream-file`, and on the number of detectors,
 selected with `--detectors N` (1–4, default 1):
 
 ```
-builddir\dump_graph.exe --histogram-dump | dot -Tsvg -o graph.svg
+builddir\dump_graph.exe --histogram-file | dot -Tsvg -o graph.svg
 ```
 
 ### Installing into Micro-Manager
@@ -276,16 +277,23 @@ The following are shared by all detectors:
 - **SaveHistograms** (default `false`) — when enabled, the full per-pixel
   histogram (HistogramBins bins/pixel) of every enabled detector is
   additionally computed, accumulated over the whole acquisition, and written
-  to `<prefix>_NNNN.hist` (see **FileNamePrefix**), for offline inspection.
-  The file is raw native-endian `uint16` with shape (channel, y, x, bin),
-  written once, at the end of the acquisition; `channel` is the OpenScan
-  channel index (see [Detectors](#detectors)). Nothing is written if the
+  to `<prefix>_NNNN.hist` or `<prefix>_NNNN.hist.zst`, depending on
+  **HistogramFileFormat** (see also **FileNamePrefix**), for offline
+  inspection. The histogram has shape (channel, y, x, bin) and is written
+  once, at the end of the acquisition; `channel` is the OpenScan channel
+  index (see [Detectors](#detectors)). Nothing is written if the
   acquisition is stopped before the requested number of frames is reached.
   This is off by default because computing it roughly doubles per-event
-  processing cost and writes a large file
-  (`channels * width * height * HistogramBins * 2` bytes) — leave it off for
+  processing cost and writes a large file (uncompressed,
+  `channels * width * height * HistogramBins * 2` bytes) — leave it off for
   normal/live acquisitions and enable it only when you need to inspect the
   underlying histogram data.
+- **HistogramFileFormat** (default `Compressed 16-bit array (.hist.zst)`) —
+  the format of the **SaveHistograms** file:
+  - `Raw 16-bit array (.hist)` — a headerless native-endian `uint16` array.
+  - `Compressed 16-bit array (.hist.zst)` — the same bytes, compressed as a
+    single [zstd](https://facebook.github.io/zstd/) frame (level 3) (can be
+    decompressed with 7-Zip, PeaZip, or the command-line `zstd` tool).
 
 ### Live image
 
@@ -302,15 +310,24 @@ sample per pixel.
 
 ### File output
 
-- **SaveRawData** (default `false`) — when enabled, writes every raw tag
-  received during the acquisition to a file in the vendor SDK's raw dump
-  format (16-byte records; decode with `tools/dump_tags.py`).
+- **SaveTagStream** (default `false`) — when enabled, writes every tag
+  received during the acquisition to `<prefix>_NNNN.ttdump` or
+  `<prefix>_NNNN.ttdump.zst`, depending on **TagStreamFileFormat** (decode
+  either with `tools/print_ttdump.py`).
+- **TagStreamFileFormat** (default `Compressed (.ttdump.zst)`) — the format
+  of the **SaveTagStream** file:
+  - `Uncompressed (.ttdump)` — 16-byte records, as written by the vendor
+    SDK's `Dump` measurement.
+  - `Compressed (.ttdump.zst)` — the same bytes, compressed as a single zstd
+    frame (can be decompressed with 7-Zip, PeaZip, or the command-line
+    `zstd` tool).
 - **FileNamePrefix** (default `OpenScan-Swabian`) — path prefix for saved
   files; may include a directory (e.g. `C:/Data/myexperiment`) or be a bare
   name (relative to Micro-Manager's working directory). Each acquisition's
-  actual filenames are `<prefix>_NNNN.raw` and `<prefix>_NNNN.hist`, where
-  `NNNN` (0000-9999) is the smallest index not in use by either extension;
-  both files of one acquisition share the index.
+  actual filenames are `<prefix>_NNNN.<ext>`, with the extensions of the
+  selected formats, where `NNNN` (0000-9999) is the smallest index not in
+  use by any of `.ttdump`, `.ttdump.zst`, `.hist`, or `.hist.zst`; all
+  files of one acquisition share the index.
 
 ## Simulate mode details
 
