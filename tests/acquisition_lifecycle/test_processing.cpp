@@ -1,6 +1,7 @@
 // Tests for the processing pipeline (Processing.cpp) with multiple detectors,
 // driven the way AcquisitionRun drives it, with hand-built tags.
 
+#include "CountRates.h"
 #include "Processing.h"
 #include "ProcessingThread.h"
 #include "TagStreamProcessor.h"
@@ -8,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <libtcspc/tcspc.hpp>
 
@@ -20,6 +22,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -71,9 +74,11 @@ MakeParams(bool cumulativeIntensity, std::optional<std::string> histogramFile,
         .histogramFileFormat = histogramFormat,
         .tagStreamFileName = std::nullopt,
         .tagStreamFileFormat = TagStreamFileFormat::TTDump,
+        .countRateTimeConstant_ps = 100'000'000'000,
     };
     for (std::uint32_t i = 0; i < kNumDetectors; ++i)
-        params.detectors.push_back({.leadingChannel = LeadingChannel(i),
+        params.detectors.push_back({.slot = i,
+                                    .leadingChannel = LeadingChannel(i),
                                     .trailingChannel = -LeadingChannel(i)});
     return params;
 }
@@ -115,6 +120,7 @@ std::vector<Tag> MakeTags(std::vector<Photon> const &photons) {
 struct RunResult {
     std::optional<ProcessingThread::Outcome> outcome;
     std::map<std::uint32_t, std::vector<std::vector<std::uint16_t>>> frames;
+    std::shared_ptr<CountRates> countRates = std::make_shared<CountRates>();
 };
 
 bool WaitUntilFinished(ProcessingThread const &thread) {
@@ -141,7 +147,7 @@ RunResult Run(ProcessingParams const &params, std::vector<Tag> const &tags) {
                 result.frames[channel].emplace_back(pixels.begin(),
                                                     pixels.end());
             },
-            ctx));
+            result.countRates, ctx));
         ProcessingThread thread(
             ctx->access<tcspc::buffer_accessor>(kTagBufferTrackerName),
             [&](ProcessingThread::Outcome outcome, std::string const &) {
@@ -189,14 +195,17 @@ TEST_CASE("MakeProcessingPipeline rejects an out-of-range detector count",
     auto params = MakeParams(false, std::nullopt);
     auto const callback = [](std::uint32_t, std::span<tcspc::u16 const>) {};
 
+    auto const rates = std::make_shared<CountRates>();
+
     params.detectors.clear();
-    CHECK_THROWS_AS(MakeProcessingPipeline(params, callback, ctx),
+    CHECK_THROWS_AS(MakeProcessingPipeline(params, callback, rates, ctx),
                     std::invalid_argument);
 
     for (std::uint32_t i = 0; i <= kMaxDetectors; ++i)
-        params.detectors.push_back({.leadingChannel = LeadingChannel(i),
+        params.detectors.push_back({.slot = i,
+                                    .leadingChannel = LeadingChannel(i),
                                     .trailingChannel = -LeadingChannel(i)});
-    CHECK_THROWS_AS(MakeProcessingPipeline(params, callback, ctx),
+    CHECK_THROWS_AS(MakeProcessingPipeline(params, callback, rates, ctx),
                     std::invalid_argument);
 }
 
@@ -253,4 +262,51 @@ TEST_CASE("Saved histogram is the acquisition total, laid out by channel, "
 
     CHECK(ReadU16File(file, zst) == expected);
     std::filesystem::remove(file);
+}
+
+TEST_CASE("Count rates are reported per detector slot at each tap",
+          "[processing]") {
+    constexpr timestamp_t kMs = 1'000'000'000;
+    auto params = MakeParams(false, std::nullopt);
+    params.numFrames = kNumFrames + 1;
+    params.detectors[1].slot = 3;
+
+    std::vector<Tag> tags = MakeTags(kPhotons);
+    // On detector 1: an unpaired leading edge, and a pulse with no sync.
+    tags.emplace_back(600'000'000, LeadingChannel(1));
+    tags.emplace_back(700'000'000, LeadingChannel(1));
+    tags.emplace_back(700'000'000 + kPulseWidth, -LeadingChannel(1));
+    // An empty last frame at 5 ms makes the time-correlated tap close its
+    // first 1 ms bin (holding all of the photons above) before the
+    // acquisition completes.
+    for (std::uint32_t y = 0; y < kHeight; ++y)
+        tags.emplace_back(5 * kMs + y * kLinePeriod, kLineClock);
+    std::sort(tags.begin(), tags.end(),
+              [](Tag const &a, Tag const &b) { return a.time < b.time; });
+
+    auto const result = Run(params, tags);
+    CHECK(result.outcome == ProcessingThread::Outcome::Completed);
+    CountRates const &rates = *result.countRates;
+
+    for (std::size_t slot : {1, 2}) {
+        INFO("slot " << slot);
+        CHECK(rates.Get(RateTap::LeadingEdge, slot) == 0.0);
+        CHECK(rates.Get(RateTap::Photon, slot) == 0.0);
+        CHECK(rates.Get(RateTap::TimeCorrelatedPhoton, slot) == 0.0);
+    }
+
+    // Each tap's bins are timed independently, so compare slots within a
+    // tap: slot 0 has 4 photons; slot 3 has 6 leading edges, 5 pulses, and 4
+    // time-correlated photons.
+    auto const ratio = [&](RateTap tap) {
+        double const r0 = rates.Get(tap, 0);
+        REQUIRE(r0 > 0.0);
+        return rates.Get(tap, 3) / r0;
+    };
+    CHECK_THAT(ratio(RateTap::LeadingEdge),
+               Catch::Matchers::WithinRel(6.0 / 4.0, 1e-9));
+    CHECK_THAT(ratio(RateTap::Photon),
+               Catch::Matchers::WithinRel(5.0 / 4.0, 1e-9));
+    CHECK_THAT(ratio(RateTap::TimeCorrelatedPhoton),
+               Catch::Matchers::WithinRel(1.0, 1e-9));
 }

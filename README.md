@@ -21,8 +21,12 @@ conventional 16-bit image per detector.
   described below.
 - `src/Processing.cpp`/`.h` — the libtcspc processing graph: decodes
   tags, pairs sync/photon detections, derives per-pixel timing windows from
-  the line clock, bins photons into per-pixel histograms, and delivers
-  frames.
+  the line clock, bins photons into per-pixel histograms, delivers frames,
+  and measures count rates.
+- `src/RateProcessors.hpp` — generic libtcspc-style processors (namespace
+  `tcspc_ext`) for binned counting and moving-average rates.
+- `src/CountRates.h` — the per-detector count rate store shared between the
+  processing thread and the rate settings.
 - `src/AcquisitionRun.*`, `src/TagStreamMeasurement.*`,
   `src/TagStreamProcessor.*`, `src/ProcessingThread.*` — the acquisition
   lifecycle: the SDK measurement that delivers tags, the thread that
@@ -158,6 +162,9 @@ below is the slot number):
   pulse.
 - **DetectorNTriggerLevel_V** — see [Trigger levels](#trigger-levels).
 - **DetectorNHardwareDelay_ns** — see [Timing](#timing).
+- **DetectorNLeadingEdgeRate_cps**, **DetectorNPhotonRate_cps**,
+  **DetectorNTimeCorrelatedPhotonRate_cps** (read-only) — see
+  [Count rates](#count-rates).
 
 The enabled detectors become OpenScan channels `0` to `n-1` in slot order,
 where `n` is the number of enabled detectors: for example, with only
@@ -258,6 +265,31 @@ The following are shared by all detectors:
   that photon; after the SyncDelay_ns shift they sit one period apart, and
   only the one within MaxDiffTime_ns pairs with the photon. A larger value
   would count such photons twice.
+
+### Count rates
+
+During an acquisition, each detector slot reports its count rate, in counts
+per second, at three stages of processing, as read-only settings (useful for
+adjusting illumination power, checking that a detector is on, and diagnosing
+the timing settings):
+
+- **DetectorNLeadingEdgeRate_cps** — raw leading edges on the detector input.
+- **DetectorNPhotonRate_cps** — pulses (leading edges paired with a trailing
+  edge). A rate well below the leading edge rate suggests that
+  **MaxPhotonPulseWidth_ns** is too short.
+- **DetectorNTimeCorrelatedPhotonRate_cps** — pulses correlated with a sync
+  (these are the photons counted in the images and histograms, apart from
+  any outside the pixel windows). A rate well below the photon rate suggests
+  that **MaxDiffTime_ns** or **SyncDelay_ns** is wrong.
+
+The rates are computed in software from the tag timestamps (not wall-clock
+time), updated continuously as the tags are processed. They are `0` when no
+acquisition is running and for disabled slots.
+
+- **CountRateTimeConstant_ms** (default `100`, range `10`–`1000`) — the time
+  constant of the exponential moving average used to smooth the rates. The
+  noise is roughly that of counting over a window of twice this length.
+  Changes take effect at the next acquisition.
 
 ### Histogram binning
 

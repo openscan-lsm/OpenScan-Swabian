@@ -6,6 +6,8 @@ subdir('acquisition_lifecycle')
 subdir('openscan_module')
 # Contains tests for file output streams
 subdir('file_output')
+# Contains tests for the generic count rate processors
+subdir('rate_processors')
 
 # Smoke tests for tools/dump_graph.cpp, one per graph shape
 dump_graph_variants = {

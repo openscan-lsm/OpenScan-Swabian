@@ -58,10 +58,13 @@ ProcessingParams MakeProcessingParams(TimeTagger_PrivateData *data,
         .histogramFileFormat = data->histogramFileFormat,
         .tagStreamFileName = std::nullopt,
         .tagStreamFileFormat = data->tagStreamFileFormat,
+        .countRateTimeConstant_ps =
+            std::int64_t(data->countRateTimeConstant_ms) * 1'000'000'000,
     };
     for (DetectorConfig const &d : config.detectors)
-        params.detectors.push_back(
-            {.leadingChannel = d.leading, .trailingChannel = d.trailing});
+        params.detectors.push_back({.slot = d.slot,
+                                    .leadingChannel = d.leading,
+                                    .trailingChannel = d.trailing});
 
     // File names follow OpenScan-BH_SPC's scheme (FileNamePrefix setting
     // + "_NNNN" index shared by all output files); see UniqueFileName.h.
@@ -115,13 +118,15 @@ std::vector<channel_t> ChannelsToRegister(TimeTagger_PrivateData *data) {
 
 AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
     : device_(device), ctx_(tcspc::context::create()),
-      processor_(
-          MakeProcessingPipeline(MakeProcessingParams(GetData(device), acq),
-                                 MakeFrameCallback(acq), ctx_)),
+      processor_(MakeProcessingPipeline(
+          MakeProcessingParams(GetData(device), acq), MakeFrameCallback(acq),
+          GetData(device)->countRates, ctx_)),
       processingThread_(
           ctx_->access<tcspc::buffer_accessor>(kTagBufferTrackerName),
-          [this](ProcessingThread::Outcome outcome,
-                 std::string const &message) {
+          [this, countRates = GetData(device)->countRates](
+              ProcessingThread::Outcome outcome, std::string const &message) {
+              // No more rate updates after this, on any outcome.
+              countRates->Zero();
               switch (outcome) {
               case ProcessingThread::Outcome::Completed:
                   OScDev_Log_Info(

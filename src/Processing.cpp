@@ -1,4 +1,6 @@
 #include "Processing.h"
+#include "CountRates.h"
+#include "RateProcessors.hpp"
 #include "ZstdOutputStream.h"
 
 #include <array>
@@ -62,6 +64,41 @@ class FrameSink {
         return tcspc::processor_graph().push_entry_point(this);
     }
 };
+
+using rate_event = tcspc_ext::rate_event<kMaxDetectors>;
+
+// Stores the rates (per detector index in ProcessingParams) by detector slot.
+class RateSink {
+    std::shared_ptr<CountRates> rates_;
+    RateTap tap_;
+    std::size_t numDetectors_;
+    std::array<std::size_t, kMaxDetectors> slots_{};
+
+  public:
+    RateSink(ProcessingParams const &params, std::shared_ptr<CountRates> rates,
+             RateTap tap)
+        : rates_(std::move(rates)), tap_(tap),
+          numDetectors_(params.detectors.size()) {
+        for (std::size_t i = 0; i < numDetectors_; ++i)
+            slots_[i] = params.detectors[i].slot;
+    }
+
+    void handle(rate_event const &event) {
+        for (std::size_t i = 0; i < numDetectors_; ++i)
+            rates_->Set(tap_, slots_[i], event.rates[i] * 1e12); // Per ps -> s
+    }
+    void flush() {}
+
+    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
+        return tcspc::processor_info(this, "RateSink");
+    }
+
+    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
+        return tcspc::processor_graph().push_entry_point(this);
+    }
+};
+
+inline constexpr abstime_type kCountRateBinWidth_ps = 1'000'000'000; // 1 ms
 
 inline constexpr int kZstdCompressionLevel = 3;
 
@@ -143,6 +180,24 @@ auto raw_tag_router(ProcessingParams const &params,
     return tcspc::channel_router(pairs);
 }
 
+// Side branch measuring the per-detector rate of Event (routed by leading
+// channel). All abstime-stamped events advance the rate bins.
+template <typename Event>
+auto make_rate_tap(ProcessingParams const &params,
+                   slot_channels const &leading,
+                   std::shared_ptr<CountRates> countRates, RateTap tap) {
+    using namespace tcspc;
+    using bin_counts_event = tcspc_ext::bin_counts_event<kMaxDetectors>;
+    return tcspc_ext::count_in_bins<Event, kMaxDetectors>(
+        slot_router(leading),
+        arg::bin_width<abstime_type>{kCountRateBinWidth_ps},
+        select<type_list<bin_counts_event>>(
+            tcspc_ext::exponential_moving_rate<kMaxDetectors>(
+                tcspc_ext::arg::time_constant{
+                    double(params.countRateTimeConstant_ps)},
+                RateSink(params, std::move(countRates), tap))));
+}
+
 template <typename Processor, typename MakeSlot>
 auto make_slots(MakeSlot make_slot) {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -215,6 +270,7 @@ auto make_live_histo_proc(ProcessingParams const &params,
 template <bool CumulativeIntensity>
 auto make_processor(ProcessingParams const &params,
                     FrameCallback frameCallback,
+                    std::shared_ptr<CountRates> const &countRates,
                     std::shared_ptr<tcspc::context> const &ctx) {
     using namespace tcspc;
 
@@ -336,15 +392,19 @@ auto make_processor(ProcessingParams const &params,
     auto [tc_merge, start_stop_merge] =
     merge<tc_event_list>(
         arg::max_buffered<>{1 << 20},
-    count_up_to<pixel_stop_event, acquisition_complete_event, never_event,
-                true>(
-        arg::threshold<u64>{u64(params.width) * params.height *
-                            params.numFrames},
-        arg::limit<u64>{std::numeric_limits<u64>::max()},
-        arg::initial_count<u64>{0},
-    stop<type_list<acquisition_complete_event>>(
-        "reached requested frame count",
-    std::move(tc_downstream))));
+    broadcast<tc_event_list>(
+        count_up_to<pixel_stop_event, acquisition_complete_event, never_event,
+                    true>(
+            arg::threshold<u64>{u64(params.width) * params.height *
+                                params.numFrames},
+            arg::limit<u64>{std::numeric_limits<u64>::max()},
+            arg::initial_count<u64>{0},
+        stop<type_list<acquisition_complete_event>>(
+            "reached requested frame count",
+        std::move(tc_downstream))),
+        make_rate_tap<time_correlated_detection_event<>>(
+            params, leading_channels, countRates,
+            RateTap::TimeCorrelatedPhoton)));
 
     auto [sync_merge, cfd_merge] =
     merge<type_list<detection_event<>, time_reached_event<>>>(
@@ -375,7 +435,10 @@ auto make_processor(ProcessingParams const &params,
     remove_time_correlation(
     recover_order<type_list<detection_event<>, time_reached_event<>>>(
         arg::time_window<abstime_type>{params.maxPhotonPulseWidth_ps},
-    std::move(cfd_merge))))));
+    broadcast<type_list<detection_event<>, time_reached_event<>>>(
+        std::move(cfd_merge),
+        make_rate_tap<detection_event<>>(params, leading_channels,
+                                         countRates, RateTap::Photon)))))));
 
     auto pixel_marker_processor =
     // Convert line clock detection events into (width + 1) pixel tick events
@@ -408,14 +471,17 @@ auto make_processor(ProcessingParams const &params,
         begin_lost_interval_event<>,
         end_lost_interval_event<>,
         lost_counts_event<>>>("error in input data",
-    regulate_time_reached(
-        arg::interval_threshold<abstime_type>{1 << 30}, // About 1 ms
-        arg::count_threshold<>{1 << 18}, // 1/4 of merge buffer size
-    route<type_list<detection_event<>>, type_list<time_reached_event<>>>(
-        raw_tag_router(params, leading_channels, trailing_channels),
-        std::move(sync_processor),
-        std::move(photon_processor),
-        std::move(pixel_marker_processor)))))));
+    broadcast<type_list<detection_event<>, time_reached_event<>>>(
+        regulate_time_reached(
+            arg::interval_threshold<abstime_type>{1 << 30}, // About 1 ms
+            arg::count_threshold<>{1 << 18}, // 1/4 of merge buffer size
+        route<type_list<detection_event<>>, type_list<time_reached_event<>>>(
+            raw_tag_router(params, leading_channels, trailing_channels),
+            std::move(sync_processor),
+            std::move(photon_processor),
+            std::move(pixel_marker_processor))),
+        make_rate_tap<detection_event<>>(params, leading_channels,
+                                         countRates, RateTap::LeadingEdge))))));
 
     // Save the tags exactly as processed (discarded if no file name was
     // given): 16-byte records in the vendor SDK's Dump format.
@@ -455,13 +521,14 @@ auto make_processor(ProcessingParams const &params,
 TagPipeline
 MakeProcessingPipeline(ProcessingParams const &params,
                        FrameCallback frameCallback,
+                       std::shared_ptr<CountRates> countRates,
                        std::shared_ptr<tcspc::context> const &ctx) {
     if (params.detectors.empty() || params.detectors.size() > kMaxDetectors)
         throw std::invalid_argument("Number of detectors must be 1 to " +
                                     std::to_string(kMaxDetectors));
     if (params.intensityImagesAreCumulative)
-        return TagPipeline(
-            make_processor<true>(params, std::move(frameCallback), ctx));
-    return TagPipeline(
-        make_processor<false>(params, std::move(frameCallback), ctx));
+        return TagPipeline(make_processor<true>(
+            params, std::move(frameCallback), countRates, ctx));
+    return TagPipeline(make_processor<false>(params, std::move(frameCallback),
+                                             countRates, ctx));
 }

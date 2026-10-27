@@ -47,7 +47,7 @@ TEST_CASE("device settings expose the expected names, defaults, and "
     size_t count = 0;
     CheckOk(OSc_Device_GetSettings(fx.detector, &settings, &count),
             "GetSettings");
-    REQUIRE(count == 31);
+    REQUIRE(count == 44);
 
     SECTION("the expected settings are present, without duplicates") {
         std::set<std::string> const expected = {
@@ -60,20 +60,33 @@ TEST_CASE("device settings expose the expected names, defaults, and "
             "Detector0Input",
             "Detector0TriggerLevel_V",
             "Detector0HardwareDelay_ns",
+            "Detector0LeadingEdgeRate_cps",
+            "Detector0PhotonRate_cps",
+            "Detector0TimeCorrelatedPhotonRate_cps",
             "EnableDetector1",
             "Detector1Input",
             "Detector1TriggerLevel_V",
             "Detector1HardwareDelay_ns",
+            "Detector1LeadingEdgeRate_cps",
+            "Detector1PhotonRate_cps",
+            "Detector1TimeCorrelatedPhotonRate_cps",
             "EnableDetector2",
             "Detector2Input",
             "Detector2TriggerLevel_V",
             "Detector2HardwareDelay_ns",
+            "Detector2LeadingEdgeRate_cps",
+            "Detector2PhotonRate_cps",
+            "Detector2TimeCorrelatedPhotonRate_cps",
             "EnableDetector3",
             "Detector3Input",
             "Detector3TriggerLevel_V",
             "Detector3HardwareDelay_ns",
+            "Detector3LeadingEdgeRate_cps",
+            "Detector3PhotonRate_cps",
+            "Detector3TimeCorrelatedPhotonRate_cps",
             "MaxPhotonPulseWidth_ns",
             "MaxDiffTime_ns",
+            "CountRateTimeConstant_ms",
             "SaveHistograms",
             "HistogramFileFormat",
             "HistogramBins",
@@ -346,6 +359,46 @@ TEST_CASE("device settings expose the expected names, defaults, and "
         CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
         CHECK(v == 80);
         CheckOk(OSc_Setting_SetInt32Value(s, 50), "restore");
+    }
+
+    SECTION("CountRateTimeConstant_ms: default, range, and round-trip") {
+        auto *s = FindSetting(settings, count, "CountRateTimeConstant_ms");
+        REQUIRE(s != nullptr);
+        int32_t v = 0;
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get");
+        CHECK(v == 100);
+
+        int32_t min = 0, max = 0;
+        CheckOk(OSc_Setting_GetInt32ContinuousRange(s, &min, &max), "range");
+        CHECK(min == 10);
+        CHECK(max == 1000);
+
+        CheckOk(OSc_Setting_SetInt32Value(s, 250), "set");
+        CheckOk(OSc_Setting_GetInt32Value(s, &v), "get2");
+        CHECK(v == 250);
+        CheckOk(OSc_Setting_SetInt32Value(s, 100), "restore");
+    }
+
+    SECTION("count rate settings are read-only and zero when not acquiring") {
+        for (int d = 0; d < 4; ++d) {
+            for (char const *tap :
+                 {"LeadingEdge", "Photon", "TimeCorrelatedPhoton"}) {
+                std::string const name =
+                    "Detector" + std::to_string(d) + tap + "Rate_cps";
+                INFO(name);
+                auto *s = FindSetting(settings, count, name);
+                REQUIRE(s != nullptr);
+                OSc_ValueType type;
+                CheckOk(OSc_Setting_GetValueType(s, &type), "type");
+                CHECK(type == OSc_ValueType_Float64);
+                bool writable = true;
+                CheckOk(OSc_Setting_IsWritable(s, &writable), "writable");
+                CHECK_FALSE(writable);
+                double v = -1.0;
+                CheckOk(OSc_Setting_GetFloat64Value(s, &v), "get");
+                CHECK(v == 0.0);
+            }
+        }
     }
 
     SECTION("boolean settings default to false and round-trip") {
