@@ -22,7 +22,10 @@ inline constexpr std::size_t kMaxDetectors = 4;
 enum class HistogramFileFormat { Hist, HistZst };
 enum class TagStreamFileFormat { TTDump, TTDumpZst };
 
+class CountRates;
+
 struct DetectorChannels {
+    std::size_t slot; // 0 to kMaxDetectors - 1, for count rate reporting
     std::int32_t leadingChannel;
     std::int32_t trailingChannel;
 };
@@ -53,6 +56,8 @@ struct ProcessingParams {
     HistogramFileFormat histogramFileFormat;
     std::optional<std::string> tagStreamFileName;
     TagStreamFileFormat tagStreamFileFormat;
+
+    std::int64_t countRateTimeConstant_ps;
 };
 
 // Receives one u16 sample per pixel (width * height), valid only for the
@@ -61,6 +66,9 @@ using FrameCallback =
     std::function<void(std::uint32_t channel, std::span<tcspc::u16 const>)>;
 
 // Throws std::invalid_argument if the number of detectors is out of range.
+// Count rates are written to countRates during processing (it is not zeroed
+// at the end).
 TagPipeline MakeProcessingPipeline(ProcessingParams const &params,
                                    FrameCallback frameCallback,
+                                   std::shared_ptr<CountRates> countRates,
                                    std::shared_ptr<tcspc::context> const &ctx);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AcquisitionRun.h"
+#include "CountRates.h"
 #include "Processing.h"
 #include "TaggerConfig.h"
 
@@ -53,6 +54,10 @@ struct TimeTagger_PrivateData {
     bool saveTagStream = false;
     TagStreamFileFormat tagStreamFileFormat = TagStreamFileFormat::TTDumpZst;
     std::string fileNamePrefix = "OpenScan-Swabian";
+
+    int32_t countRateTimeConstant_ms = 100;
+    // Written by the acquisition's processing thread; zero when not running.
+    std::shared_ptr<CountRates> countRates = std::make_shared<CountRates>();
 };
 
 inline TimeTagger_PrivateData *GetData(OScDev_Device *device) {

@@ -359,6 +359,55 @@ class HistogramBinWidthSetting {
     };
 };
 
+class CountRateTimeConstantSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
+        *value = GetSettingDeviceData(setting)->countRateTimeConstant_ms;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
+        GetSettingDeviceData(setting)->countRateTimeConstant_ms = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error
+    GetNumericConstraintType(OScDev_Setting *,
+                             OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min,
+                                 int32_t *max) {
+        *min = 10;
+        *max = 1000;
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32Range = GetRange,
+    };
+};
+
+// Read-only; 0 when no acquisition is running.
+template <RateTap Tap, std::size_t D> class CountRateSetting {
+    static OScDev_Error IsWritable(OScDev_Setting *, bool *writable) {
+        *writable = false;
+        return OScDev_OK;
+    }
+    static OScDev_Error Get(OScDev_Setting *setting, double *value) {
+        *value = GetSettingDeviceData(setting)->countRates->Get(Tap, D);
+        return OScDev_OK;
+    }
+
+  public:
+    static inline OScDev_SettingImpl impl = {
+        .IsWritable = IsWritable,
+        .GetFloat64 = Get,
+    };
+};
+
 class FileNamePrefixSetting {
     static OScDev_Error Get(OScDev_Setting *setting, char *value) {
         strncpy_s(value, OScDev_MAX_STR_SIZE,
@@ -415,6 +464,13 @@ void AppendDetectorSettings(std::vector<SettingEntry> &entries) {
         {name + "HardwareDelay_ns", OScDev_ValueType_Float64,
          &NanosecondSetting<&DetectorField<D, &DS::hardwareDelay_ps>,
                             HardwareDelayRange<input>>::impl});
+    entries.push_back({name + "LeadingEdgeRate_cps", OScDev_ValueType_Float64,
+                       &CountRateSetting<RateTap::LeadingEdge, D>::impl});
+    entries.push_back({name + "PhotonRate_cps", OScDev_ValueType_Float64,
+                       &CountRateSetting<RateTap::Photon, D>::impl});
+    entries.push_back(
+        {name + "TimeCorrelatedPhotonRate_cps", OScDev_ValueType_Float64,
+         &CountRateSetting<RateTap::TimeCorrelatedPhoton, D>::impl});
 }
 
 std::vector<SettingEntry> MakeSettingEntries() {
@@ -445,6 +501,8 @@ std::vector<SettingEntry> MakeSettingEntries() {
             {"MaxDiffTime_ns", OScDev_ValueType_Float64,
              &NanosecondSetting<&Field<&PD::maxDiffTime_ps>,
                                 PositiveNsRange>::impl},
+            {"CountRateTimeConstant_ms", OScDev_ValueType_Int32,
+             &CountRateTimeConstantSetting::impl},
             {"SaveHistograms", OScDev_ValueType_Bool,
              &BoolSetting<&Field<&PD::saveHistograms>>::impl},
             {"HistogramFileFormat", OScDev_ValueType_Enum,

@@ -248,6 +248,18 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
                             static_cast<double>(px.size());
     CHECK(std::sqrt(variance) > 0.5);
 
+    // Stop joins the processing thread, after which the rates are zeroed.
+    CheckOk(OSc_Acquisition_Stop(run.acq), "Acquisition_Stop");
+    for (char const *tap : {"LeadingEdge", "Photon", "TimeCorrelatedPhoton"}) {
+        std::string const name = std::string("Detector0") + tap + "Rate_cps";
+        INFO(name);
+        double rate = -1.0;
+        CheckOk(OSc_Setting_GetFloat64Value(
+                    FindSetting(run.settings, run.settingCount, name), &rate),
+                "get " + name);
+        CHECK(rate == 0.0);
+    }
+
     // Cleanup
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);

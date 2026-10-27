@@ -1,9 +1,12 @@
+#include "CountRates.h"
 #include "Processing.h"
 
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string_view>
 
@@ -42,6 +45,7 @@ int main(int argc, char *argv[]) {
         .histogramFileFormat = HistogramFileFormat::HistZst,
         .tagStreamFileName = {},
         .tagStreamFileFormat = TagStreamFileFormat::TTDumpZst,
+        .countRateTimeConstant_ps = 100'000'000'000,
     };
     int numDetectors = 1;
 
@@ -73,6 +77,7 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < numDetectors; ++i)
         params.detectors.push_back({
+            .slot = std::size_t(i),
             .leadingChannel = -(3 + i),
             .trailingChannel = 3 + i,
         });
@@ -80,7 +85,7 @@ int main(int argc, char *argv[]) {
     try {
         auto const pipeline = MakeProcessingPipeline(
             params, [](std::uint32_t, std::span<tcspc::u16 const>) {},
-            tcspc::context::create());
+            std::make_shared<CountRates>(), tcspc::context::create());
         std::cout << tcspc::graphviz_from_processor_graph(
             pipeline.introspect_graph());
     } catch (std::exception const &exc) {
