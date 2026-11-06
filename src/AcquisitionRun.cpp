@@ -149,7 +149,12 @@ AcquisitionRun::AcquisitionRun(OScDev_Device *device, OScDev_Acquisition *acq)
                    ChannelsToRegister(GetData(device)),
                    [this](std::vector<Tag> const &tags, timestamp_t end_time) {
                        return Push(tags, end_time);
-                   }) {}
+                   }) {
+    // The scan may begin as soon as Arm() returns; make sure the channel
+    // registrations and settings are active on the hardware by then.
+    if (!GetData(device)->tagger->sync())
+        throw std::runtime_error("Failed to synchronize the Time Tagger");
+}
 
 bool AcquisitionRun::isRunning() { return measurement_.isRunning(); }
 
